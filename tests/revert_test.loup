@@ -1,0 +1,68 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from commands.revert import (hex_value, revert_dump);
+
+func text(s: string): bytes {
+    var codes: list[int] = [];
+    for (ch in s) {
+        codes.push(char.fromString(ch).unwrap().toInt());
+    }
+    return bytesFromInts(codes);
+}
+
+func rev(dump: string, plain: bool, seekable: bool): list[int] {
+    let none: list[int] = [];
+    return revert_dump(text(dump), 16, plain, 0, seekable, none).data;
+}
+
+func show(xs: list[int]): string {
+    var parts: list[string] = [];
+    for (x in xs) {
+        parts.push(str(x));
+    }
+    return parts.join(",");
+}
+
+func test_hex_values(): void {
+    expectEq(hex_value(48), 0, "0");
+    expectEq(hex_value(102), 15, "f");
+    expectEq(hex_value(70), 15, "F");
+    expectEq(hex_value(103), -1, "g");
+}
+
+func test_default_style(): void {
+    expectEq(show(rev("00000000: 4142 43  ABC\n", false, true)), "65,66,67", "bytes, then the text column is skipped");
+    expectEq(show(rev("00000000: 41 42 43\n", false, true)), "65,66,67", "single-byte groups");
+}
+
+func test_text_column_is_ignored(): void {
+    # A full line of 16 bytes: the characters after them look like hex.
+    let line = "00000000: 6161 6161 6161 6161 6161 6161 6161 6161  aaaaaaaaaaaaaaaa\n";
+    expectEq(rev(line, false, true).len(), 16, "16 bytes, not more");
+}
+
+func test_offsets_and_gaps(): void {
+    expectEq(show(rev("3: 41\n", false, true)), "0,0,0,65", "a gap is zero-filled");
+    expectEq(show(rev("2: 4142\n0: 43\n", false, true)), "67,0,65,66", "a file is rewritten in place");
+    let none: list[int] = [];
+    let r = revert_dump(text("2: 41\n0: 42\n"), 16, false, 0, false, none);
+    expectEq(r.error, "Sorry, cannot seek backwards.", "a pipe cannot go back");
+    expectEq(show(r.data), "0,0,65", "what was written before the error");
+}
+
+func test_base_offset_and_patch(): void {
+    let none: list[int] = [];
+    expectEq(show(revert_dump(text("0: 41\n"), 16, false, 2, true, none).data), "0,0,65", "-s 2");
+    expectEq(show(revert_dump(text("1: 7a\n"), 16, false, 0, true, [65, 66, 67]).data), "65,122,67", "patching keeps the rest");
+}
+
+func test_plain_style(): void {
+    expectEq(show(rev("4142\n43 44\r\n", true, false)), "65,66,67,68", "white space and CR ignored");
+    expectEq(show(rev("414", true, false)), "65", "a lone digit is dropped");
+}
+
+func test_too_far(): void {
+    let none: list[int] = [];
+    expect(revert_dump(text("ffffffff: 41\n"), 16, false, 0, true, none).error != "", "offsets past 64 MiB are refused");
+}

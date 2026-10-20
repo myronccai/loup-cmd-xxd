@@ -1,0 +1,37 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from cli.args import (parse_args, layout);
+from commands.xxd import (seek_start, dump_end, render_dump);
+
+func test_seek_in_a_file(): void {
+    let none: list[string] = [];
+    expectEq(seek_start(10, parse_args(none).unwrap(), true), 0, "no -s");
+    expectEq(seek_start(10, parse_args(["-s", "4"]).unwrap(), true), 4, "-s 4");
+    expectEq(seek_start(10, parse_args(["-s", "40"]).unwrap(), true), 40, "past the end is allowed");
+    expectEq(seek_start(10, parse_args(["-s", "-3"]).unwrap(), true), 7, "-s -3");
+    expectEq(seek_start(10, parse_args(["-s", "-30"]).unwrap(), true), -1, "before the start");
+    expectEq(seek_start(10, parse_args(["-s", "+-3"]).unwrap(), true), -1, "relative, backwards from 0");
+}
+
+func test_seek_in_a_pipe(): void {
+    expectEq(seek_start(10, parse_args(["-s", "10"]).unwrap(), false), 10, "skip all of it");
+    expectEq(seek_start(10, parse_args(["-s", "11"]).unwrap(), false), -1, "cannot skip past the end");
+    expectEq(seek_start(10, parse_args(["-s", "-1"]).unwrap(), false), -1, "cannot seek from the end");
+}
+
+func test_dump_end(): void {
+    expectEq(dump_end(10, 0, -1), 10, "no limit");
+    expectEq(dump_end(10, 2, 3), 5, "-l 3");
+    expectEq(dump_end(10, 8, 5), 10, "limit past the end");
+    expectEq(dump_end(10, 12, 5), 12, "start past the end");
+}
+
+func test_render(): void {
+    let opts = parse_args(["-p", "-l", "2"]).unwrap();
+    let (cols, group) = layout(opts).unwrap();
+    expectEq(render_dump(bytesFromInts([1, 2, 3]), opts, cols, group, 0), "0102\n", "-p -l 2");
+    let named = parse_args(["-i", "x.bin"]).unwrap();
+    let (ic, ig) = layout(named).unwrap();
+    expect(render_dump(bytesFromInts([1]), named, ic, ig, 0).startsWith("unsigned char x_bin[]"), "named array");
+}

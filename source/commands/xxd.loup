@@ -1,0 +1,134 @@
+@mode(host.dual)
+
+# xxd: reads the input, applies -s and -l, and writes a dump, or (with -r)
+# converts a dump back into bytes.
+
+from appinfo import (APP_NAME, EXIT_OK, EXIT_INPUT, EXIT_OUTPUT, EXIT_SEEK, EXIT_SEEK_BACK, EXIT_CANNOT_REVERT);
+from cli.args import (Options);
+from commands.dump import (dump_lines, plain_lines, include_lines, c_name);
+from commands.revert import (Reverted, revert_dump);
+from io.fs import (isDir, isFile);
+from io.path import (dirname);
+
+# Where a dump starts, as xxd's -s computes it, or -1 if it cannot seek
+# there. `seekable` is false when the input is a pipe: then xxd can only
+# skip forward by reading, so -s -N and offsets past the end fail.
+pub func seek_start(size: int, opts: Options, seekable: bool): int {
+    if (!opts.seek_given) {
+        return 0;
+    }
+    let n = opts.seek;
+    if (!seekable) {
+        if (opts.seek_from_end or n > size) {
+            return -1;
+        }
+        return if (n < 0) { 0 } else { n };
+    }
+    var target = n;
+    if (opts.seek_from_end) {
+        target = if (opts.seek_relative) { -n } else { size - n };
+    }
+    return if (target < 0) { -1 } else { target };
+}
+
+# Where a dump of `size` bytes starting at `start` stops under -l.
+pub func dump_end(size: int, start: int, length: int): int {
+    if (start >= size) {
+        return start;
+    }
+    if (length >= 0 and start + length < size) {
+        return start + length;
+    }
+    return size;
+}
+
+# The dump of `data` as text, in the style the options select.
+pub func render_dump(data: bytes, opts: Options, cols: int, group: int, start: int): string {
+    let end = dump_end(data.len(), start, opts.length);
+    let named = opts.infile != "" and opts.infile != "-";
+    let pieces = match opts.mode {
+        "plain" => plain_lines(data, start, end, cols, opts.upper),
+        "include" => include_lines(data, start, end, cols, opts.upper, opts.bits, if (named) { c_name(opts.infile) } else { "" }),
+        _ => dump_lines(data, start, end, cols, group, opts.upper, opts.bits),
+    };
+    return pieces.join("");
+}
+
+func fail(message: string, status: int): int {
+    printErr(i"{$ APP_NAME $}: {$ message $}");
+    return status;
+}
+
+func to_stdout(path: string): bool {
+    return path == "" or path == "-";
+}
+
+func list_of(data: bytes): list[int] {
+    var out: list[int] = [];
+    for (k in 0..data.len()) {
+        out.push(data[k]);
+    }
+    return out;
+}
+
+pub func run_xxd(opts: Options, cols: int, group: int): int {
+    let from_stdin = opts.infile == "" or opts.infile == "-";
+    if (!from_stdin) {
+        if (!exists(opts.infile)) {
+            return fail(i"{$ opts.infile $}: No such file or directory", EXIT_INPUT);
+        }
+        if (isDir(opts.infile)) {
+            return fail("Is a directory", EXIT_INPUT);
+        }
+    }
+    if (!to_stdout(opts.outfile)) {
+        if (isDir(opts.outfile)) {
+            return fail(i"{$ opts.outfile $}: Is a directory", EXIT_OUTPUT);
+        }
+        let parent = dirname(opts.outfile);
+        if (parent != "" and !isDir(parent)) {
+            return fail(i"{$ opts.outfile $}: No such file or directory", EXIT_OUTPUT);
+        }
+    }
+    let data = readBytes(if (from_stdin) { "/dev/stdin" } else { opts.infile });
+
+    if (opts.revert) {
+        if (opts.mode == "include" or opts.bits) {
+            return fail("Sorry, cannot revert this type of hexdump", EXIT_CANNOT_REVERT);
+        }
+        let base = if (opts.seek_from_end) { -opts.seek } else { opts.seek };
+        var initial: list[int] = [];
+        var seekable = true;
+        if (to_stdout(opts.outfile)) {
+            seekable = isFile("/dev/stdout");
+        } else if (exists(opts.outfile)) {
+            initial = list_of(readBytes(opts.outfile));
+        }
+        let r = revert_dump(data, cols, opts.mode == "plain", base, seekable, initial);
+        let out = bytesFromInts(r.data);
+        if (to_stdout(opts.outfile)) {
+            if (r.data.len() > 0) {
+                writeBytes("/dev/stdout", out);
+            }
+        } else {
+            writeBytes(opts.outfile, out);
+        }
+        if (r.error != "") {
+            return fail(r.error, EXIT_SEEK_BACK);
+        }
+        return EXIT_OK;
+    }
+
+    let seekable = !from_stdin or isFile("/dev/stdin");
+    let start = seek_start(data.len(), opts, seekable);
+    if (start < 0) {
+        return fail("Sorry, cannot seek.", EXIT_SEEK);
+    }
+    let text = render_dump(data, opts, cols, group, start);
+    if (to_stdout(opts.outfile)) {
+        print(text);
+    } else {
+        writeText(opts.outfile, text);
+    }
+    return EXIT_OK;
+}

@@ -1,0 +1,63 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from commands.dump import (hex_offset, hex_table, bits_table, char_table, dump_lines, plain_lines, include_lines, c_name);
+
+func sample(): bytes {
+    return bytesFromInts([72, 105, 0, 127, 128, 255, 10]);
+}
+
+func test_tables(): void {
+    expectEq(hex_table(false)[171], "ab", "lower case");
+    expectEq(hex_table(true)[171], "AB", "upper case");
+    expectEq(bits_table()[5], "00000101", "bits");
+    expectEq(char_table()[65], "A", "printable");
+    expectEq(char_table()[127], ".", "DEL is not printable");
+    expectEq(char_table()[200], ".", "high bytes are dots");
+}
+
+func test_offsets(): void {
+    expectEq(hex_offset(0), "00000000", "zero");
+    expectEq(hex_offset(255), "000000ff", "padded");
+    expectEq(hex_offset(4294967296), "100000000", "more than eight digits");
+}
+
+func test_hex_lines(): void {
+    let out = dump_lines(sample(), 0, 7, 4, 2, false, false).join("");
+    expectEq(out, "00000000: 4869 007f  Hi..\n00000004: 80ff 0a    ...\n", "two lines, the second padded");
+}
+
+func test_odd_group_size(): void {
+    let out = dump_lines(sample(), 0, 7, 5, 2, true, false).join("");
+    expectEq(out, "00000000: 4869 007F 80  Hi...\n00000005: FF0A          ..\n", "groups of 2 in 5 columns");
+}
+
+func test_start_offset(): void {
+    let out = dump_lines(sample(), 5, 7, 16, 2, false, false).join("");
+    expectEq(out, "00000005: ff0a                                     ..\n", "offset of the first byte shown");
+}
+
+func test_bits_lines(): void {
+    let out = dump_lines(sample(), 0, 2, 6, 1, false, true).join("");
+    # Six columns of 8 digits and a space: 53 characters, then two spaces.
+    expectEq(out, "00000000: 01001000 01101001" + " ".repeat(38) + "Hi\n", "bits");
+}
+
+func test_plain(): void {
+    expectEq(plain_lines(sample(), 0, 7, 3, false).join(""), "486900\n7f80ff\n0a\n", "3 per line");
+    expectEq(plain_lines(sample(), 0, 6, 3, false).join(""), "486900\n7f80ff\n", "no empty last line");
+    expectEq(plain_lines(sample(), 0, 7, 0, true).join(""), "4869007F80FF0A\n", "one line");
+    expectEq(plain_lines(sample(), 0, 0, 30, false).join(""), "", "nothing for no input");
+}
+
+func test_include(): void {
+    let out = include_lines(sample(), 0, 3, 2, false, false, "data").join("");
+    expectEq(out, "unsigned char data[] = {\n  0x48, 0x69,\n  0x00\n};\nunsigned int data_len = 3;\n", "named array");
+    expectEq(include_lines(sample(), 0, 2, 12, true, false, "").join(""), "  0X48, 0X69\n", "no name for stdin");
+    expectEq(include_lines(sample(), 0, 1, 12, false, true, "").join(""), "  0b01001000\n", "binary literals");
+}
+
+func test_c_names(): void {
+    expectEq(c_name("dir/file.bin"), "dir_file_bin", "punctuation becomes _");
+    expectEq(c_name("3d.obj"), "__3d_obj", "a leading digit gets __");
+}

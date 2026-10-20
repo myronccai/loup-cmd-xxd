@@ -1,0 +1,168 @@
+@mode(host.dual)
+
+# The four dump styles: the default hex dump, -b (bits), -p (plain hex) and
+# -i (a C array). Each takes the input bytes and the range [start, end) to
+# show, and returns the output as a list of pieces to join, so that even a
+# large dump is assembled in one step.
+
+const HEX_DIGITS: string = "0123456789abcdef";
+const SPACES: string = "                                                                ";
+
+# Two hex digits for every byte value, in lower or upper case.
+pub func hex_table(upper: bool): list[string] {
+    let digits = if (upper) { HEX_DIGITS.toUpperCase() } else { HEX_DIGITS };
+    var table: list[string] = [];
+    for (b in 0..256) {
+        table.push(digits.slice(b / 16, b / 16 + 1) + digits.slice(b % 16, b % 16 + 1));
+    }
+    return table;
+}
+
+# Eight binary digits for every byte value.
+pub func bits_table(): list[string] {
+    var table: list[string] = [];
+    for (b in 0..256) {
+        var text = "";
+        var bit = 128;
+        while (bit > 0) {
+            text += if ((b & bit) != 0) { "1" } else { "0" };
+            bit = bit / 2;
+        }
+        table.push(text);
+    }
+    return table;
+}
+
+# The character column: printable ASCII as itself, anything else as `.`.
+pub func char_table(): list[string] {
+    var table: list[string] = [];
+    for (b in 0..256) {
+        table.push(if (b > 31 and b < 127) { str(char.of(b)) } else { "." });
+    }
+    return table;
+}
+
+# A file offset as at least eight lower-case hex digits (C's "%08lx").
+pub func hex_offset(n: int): string {
+    var digits = "";
+    var v = n;
+    while (v > 0) {
+        digits = HEX_DIGITS.slice(v % 16, v % 16 + 1) + digits;
+        v = v / 16;
+    }
+    while (digits.len() < 8) {
+        digits = "0" + digits;
+    }
+    return digits;
+}
+
+func push_spaces(edits out: list[string], count: int): void {
+    var left = count;
+    while (left > 0) {
+        let n = if (left > SPACES.len()) { SPACES.len() } else { left };
+        out.push(SPACES.slice(0, n));
+        left -= n;
+    }
+}
+
+# The default dump (and -b with `bits`): an offset, `cols` bytes in groups of
+# `group`, and the characters. A short last line is padded so that its
+# characters line up with the lines above.
+pub func dump_lines(data: bytes, start: int, end: int, cols: int, group: int, upper: bool, bits: bool): list[string] {
+    let cells = if (bits) { bits_table() } else { hex_table(upper) };
+    let shown = char_table();
+    let digits = if (bits) { 8 } else { 2 };
+    let group_width = digits * group + 1;
+    # Width of a full line's byte columns (xxd: (grplen * cols - 1) / octspergrp).
+    let width = (group_width * cols - 1) / group;
+    var out: list[string] = [];
+    var pos = start;
+    while (pos < end) {
+        let count = if (end - pos < cols) { end - pos } else { cols };
+        out.push(hex_offset(pos));
+        out.push(": ");
+        for (k in 0..count) {
+            if (k > 0 and k % group == 0) {
+                out.push(" ");
+            }
+            out.push(cells[data[pos + k]]);
+        }
+        let used = count * digits + (count - 1) / group;
+        push_spaces(edits: out, width - used + 2);
+        for (k in 0..count) {
+            out.push(shown[data[pos + k]]);
+        }
+        out.push("\n");
+        pos += count;
+    }
+    return out;
+}
+
+# -p: bare hex digits, `cols` bytes per line; 0 means a single line.
+pub func plain_lines(data: bytes, start: int, end: int, cols: int, upper: bool): list[string] {
+    let cells = hex_table(upper);
+    var out: list[string] = [];
+    var left = cols;
+    for (pos in start..end) {
+        out.push(cells[data[pos]]);
+        if (cols > 0) {
+            left -= 1;
+            if (left == 0) {
+                out.push("\n");
+                left = cols;
+            }
+        }
+    }
+    if (cols == 0 or left < cols) {
+        out.push("\n");
+    }
+    return out;
+}
+
+# The C identifier xxd derives from a file name: other characters become
+# `_`, and a leading digit gets a `__` prefix.
+pub func c_name(file_name: string): string {
+    var name = "";
+    for (ch in file_name) {
+        let alnum = (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or (ch >= "0" and ch <= "9");
+        name += if (alnum and ch.len() == 1) { ch } else { "_" };
+    }
+    let first = file_name.slice(0, 1);
+    if (first >= "0" and first <= "9" and first.len() == 1) {
+        name = "__" + name;
+    }
+    return name;
+}
+
+# -i: the bytes as a C initializer, `cols` per line, as hex literals or
+# (with -b) binary ones. With a variable name (when the input is a named
+# file) the array declaration and a length variable surround it.
+pub func include_lines(data: bytes, start: int, end: int, cols: int, upper: bool, bits: bool, name: string): list[string] {
+    let cells = if (bits) { bits_table() } else { hex_table(upper) };
+    let prefix = if (bits) { "0b" } else if (upper) { "0X" } else { "0x" };
+    var out: list[string] = [];
+    if (name.len() > 0) {
+        out.push("unsigned char " + name + "[] = {\n");
+    }
+    var p = 0;
+    for (pos in start..end) {
+        if (p % cols != 0) {
+            out.push(", ");
+        } else if (p == 0) {
+            out.push("  ");
+        } else {
+            out.push(",\n  ");
+        }
+        out.push(prefix);
+        out.push(cells[data[pos]]);
+        p += 1;
+    }
+    if (p > 0) {
+        out.push("\n");
+    }
+    if (name.len() > 0) {
+        out.push("};\n");
+        out.push("unsigned int " + name + "_len = " + str(p) + ";\n");
+    }
+    return out;
+}

@@ -4,22 +4,30 @@
 # normal output and error messages.
 
 from debug.assert import (expectEq);
-from appinfo import (EXIT_OK, EXIT_USAGE);
+from appinfo import (EXIT_OK, EXIT_USAGE, EXIT_INPUT, EXIT_SEEK);
 from cli.app import (run);
 
 func test_version_succeeds(): void {
-    expectEq(run(["--version"]), EXIT_OK, "--version");
+    expectEq(run(["-v"]), EXIT_OK, "-v");
 }
 
-func test_hello_succeeds(): void {
-    expectEq(run(["hello", "tests"]), EXIT_OK, "hello NAME");
+func test_help_succeeds(): void {
+    expectEq(run(["-h"]), EXIT_OK, "-h");
 }
 
-func test_unknown_command_is_usage_error(): void {
-    expectEq(run(["bogus"]), EXIT_USAGE, "unknown command");
+func test_dump_succeeds(): void {
+    expectEq(run(["-l", "8", "tests/fixtures/sample.txt"]), EXIT_OK, "dump");
 }
 
-func test_missing_command_is_usage_error(): void {
-    let none: list[string] = [];
-    expectEq(run(none), EXIT_USAGE, "no command");
+func test_missing_file(): void {
+    expectEq(run(["tests/fixtures/none.bin"]), EXIT_INPUT, "missing");
+}
+
+func test_bad_seek(): void {
+    expectEq(run(["-s", "-1000", "tests/fixtures/sample.txt"]), EXIT_SEEK, "before the start");
+}
+
+func test_usage_errors(): void {
+    expectEq(run(["-z"]), EXIT_USAGE, "unknown option");
+    expectEq(run(["-c", "999", "tests/fixtures/sample.txt"]), EXIT_USAGE, "too many columns");
 }

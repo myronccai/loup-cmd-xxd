@@ -1,0 +1,147 @@
+@mode(host.dual)
+
+# xxd -r: turning a hex dump back into bytes, following xxd's `huntype`.
+#
+# Default style: each line is an offset, a colon, then `cols` bytes as hex
+# pairs; anything after them (the character column) is skipped. Lines may
+# come in any order, so bytes are written at the offset the line names:
+# a gap is filled with zero bytes, and an earlier offset overwrites what is
+# there when the output is a file (in a pipe that is an error, as xxd
+# cannot seek backwards). With -p the input is just hex pairs, with white
+# space anywhere.
+
+# The output is built in memory, so offsets past this are refused (xxd
+# itself would pad a pipe with zeros or seek a sparse file).
+pub const MAX_OFFSET: int = 67108864;
+
+# The output so far, and the error that stopped the conversion ("" if none).
+pub struct Reverted {
+    pub var data: list[int];
+    pub var error: string;
+}
+
+pub func new_reverted(initial: list[int]): Reverted {
+    return Reverted(data = initial, error = "");
+}
+
+# The value of a hex digit (an ASCII code), or -1.
+pub func hex_value(c: int): int {
+    if (c >= 48 and c <= 57) {
+        return c - 48;
+    }
+    if (c >= 97 and c <= 102) {
+        return c - 87;
+    }
+    if (c >= 65 and c <= 70) {
+        return c - 55;
+    }
+    return -1;
+}
+
+func put(edits r: Reverted, at: int, value: int): void {
+    while (r.data.len() < at) {
+        r.data.push(0);
+    }
+    if (at < r.data.len()) {
+        r.data[at] = value;
+    } else {
+        r.data.push(value);
+    }
+}
+
+# Converts the dump `text`. `base_off` (from -s) is added to every offset.
+# `seekable` says whether the output is a file (it can be rewritten in
+# place) or a pipe. `initial` is the output file's current contents: like
+# xxd, -r patches an existing file instead of truncating it.
+pub func revert_dump(text: bytes, cols: int, plain: bool, base_off: int, seekable: bool, initial: list[int]): Reverted {
+    var r = new_reverted(initial);
+    let n = text.len();
+    var k = 0;
+    var have = 0;
+    var want = 0;
+    var n1 = -1;
+    var n2 = 0;
+    var n3 = 0;
+    var p = cols;
+    var ignore_garbage = true;
+    while (k < n) {
+        var c = text[k];
+        k += 1;
+        if (c == 13) {
+            continue;
+        }
+        if (plain and (c == 32 or c == 10 or c == 9)) {
+            continue;
+        }
+        n3 = n2;
+        n2 = n1;
+        n1 = hex_value(c);
+        if (n1 == -1 and ignore_garbage) {
+            continue;
+        }
+        ignore_garbage = false;
+
+        if (!plain and p >= cols) {
+            # Still reading the offset at the start of the line.
+            if (n1 < 0) {
+                p = 0;
+                continue;
+            }
+            want = want * 16 + n1;
+            continue;
+        }
+
+        let target = base_off + want;
+        if (target > MAX_OFFSET) {
+            r.error = "Sorry, offsets past 64 MiB are not supported.";
+            return r;
+        }
+        if (target != have) {
+            if (seekable and target >= 0) {
+                have = target;
+            }
+            if (target < have) {
+                r.error = "Sorry, cannot seek backwards.";
+                return r;
+            }
+            while (have < target) {
+                put(edits: r, have, 0);
+                have += 1;
+            }
+        }
+
+        var skip_line = false;
+        if (n2 >= 0 and n1 >= 0) {
+            put(edits: r, have, n2 * 16 + n1);
+            have += 1;
+            want += 1;
+            n1 = -1;
+            if (!plain) {
+                p += 1;
+                # After `cols` bytes the rest of the line is the character column.
+                skip_line = p >= cols;
+            }
+        } else if (n1 < 0 and n2 < 0 and n3 < 0) {
+            # Already in garbage: skip the line and see what comes next.
+            skip_line = true;
+        }
+        if (skip_line) {
+            while (c != 10 and c != -1) {
+                if (k < n) {
+                    c = text[k];
+                    k += 1;
+                } else {
+                    c = -1;
+                }
+            }
+        }
+        if (c == 10) {
+            if (!plain) {
+                want = 0;
+            }
+            p = cols;
+            ignore_garbage = true;
+        }
+    }
+    return r;
+}

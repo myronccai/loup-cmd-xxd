@@ -1,64 +1,103 @@
 @mode(host.dual)
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, DEFAULT_GREETING);
+from cli.args import (parse_args, c_number, layout, plain_message);
 
-func test_no_arguments(): void {
+func test_c_numbers(): void {
+    expectEq(c_number("16"), 16, "decimal");
+    expectEq(c_number("0x10"), 16, "hex");
+    expectEq(c_number("020"), 16, "octal");
+    expectEq(c_number("-5"), -5, "negative");
+    expectEq(c_number("12abc"), 12, "stops at the first non-digit");
+    expectEq(c_number("abc"), 0, "no digits is 0");
+    expectEq(c_number("08"), 0, "8 is not an octal digit");
+}
+
+func test_defaults(): void {
     let none: list[string] = [];
     let opts = parse_args(none).unwrap();
-    expectEq(opts.command, "", "no command");
-    expectEq(opts.operands.len(), 0, "no operands");
-    expectEq(opts.greeting, DEFAULT_GREETING, "default greeting");
-    expect(!opts.help and !opts.version and !opts.verbose and !opts.shout, "no flags set");
+    expectEq(opts.mode, "hex", "hex dump");
+    expect(!opts.bits and !opts.revert and !opts.upper, "no flags");
+    expectEq(opts.infile, "", "standard input");
+    let (cols, group) = layout(opts).unwrap();
+    expectEq(cols, 16, "16 columns");
+    expectEq(group, 2, "groups of 2");
 }
 
-func test_command_and_operands(): void {
-    let opts = parse_args(["hello", "Ann"]).unwrap();
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands.len(), 1, "one operand");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_option_spellings(): void {
+    let opts = parse_args(["-cols", "8", "-g1", "-upper", "f"]).unwrap();
+    expectEq(opts.cols, 8, "-cols 8");
+    expectEq(opts.group, 1, "-g1");
+    expect(opts.upper, "-upper is -u");
+    expectEq(opts.infile, "f", "operand");
+    expectEq(parse_args(["-c8", "f"]).unwrap().cols, 8, "-c8");
+    expectEq(parse_args(["--cols", "9"]).unwrap().cols, 9, "--cols 9");
+    # As in xxd, `-len...` takes the next argument as its value.
+    expectEq(parse_args(["-len=", "7"]).unwrap().length, 7, "-len= 7");
 }
 
-func test_flags_anywhere(): void {
-    let opts = parse_args(["-v", "hello", "--shout", "Ann"]).unwrap();
-    expect(opts.verbose, "verbose");
-    expect(opts.shout, "shout");
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_seek_forms(): void {
+    let plain = parse_args(["-s", "10"]).unwrap();
+    expect(plain.seek_given and plain.seek == 10 and !plain.seek_relative and !plain.seek_from_end, "-s 10");
+    let rel = parse_args(["-s+3"]).unwrap();
+    expect(rel.seek_relative and rel.seek == 3, "-s+3");
+    let end = parse_args(["-seek", "-0x10"]).unwrap();
+    expect(end.seek_from_end and end.seek == 16, "-seek -0x10");
+}
+
+func test_operands_and_double_dash(): void {
+    let opts = parse_args(["-p", "--", "-in", "-out"]).unwrap();
+    expectEq(opts.infile, "-in", "input after --");
+    expectEq(opts.outfile, "-out", "output after --");
+    let stop = parse_args(["in", "-u"]).unwrap();
+    expect(!stop.upper, "options stop at the first operand");
+    expectEq(stop.outfile, "-u", "so -u is the output file");
+}
+
+func test_modes(): void {
+    expectEq(parse_args(["-ps"]).unwrap().mode, "plain", "-ps");
+    expectEq(parse_args(["-i"]).unwrap().mode, "include", "-i");
+    let both = parse_args(["-i", "-b"]).unwrap();
+    expect(both.mode == "include" and both.bits, "-i -b combine");
+    expect(parse_args(["-p", "-i"]).is_err(), "-p -i");
+    expect(parse_args(["-b", "-p"]).is_err(), "-b -p");
+    expect(parse_args(["-b", "-b"]).is_ok(), "-b twice is fine");
+}
+
+func test_layout_defaults(): void {
+    let (pc, pg) = layout(parse_args(["-p"]).unwrap()).unwrap();
+    expectEq(pc, 30, "-p: 30 columns");
+    expectEq(pg, 30, "no groups");
+    let (bc, bg) = layout(parse_args(["-b"]).unwrap()).unwrap();
+    expectEq(bc, 6, "-b: 6 columns");
+    expectEq(bg, 1, "-b: groups of 1");
+    let (ic, ig) = layout(parse_args(["-i"]).unwrap()).unwrap();
+    expectEq(ic, 12, "-i: 12 columns");
+    let (zc, zg) = layout(parse_args(["-c", "0"]).unwrap()).unwrap();
+    expectEq(zc, 16, "-c 0 means the default");
+    let (p0, p0g) = layout(parse_args(["-p", "-c", "0"]).unwrap()).unwrap();
+    expectEq(p0, 0, "-p -c 0 means one line");
+    let (gc, gg) = layout(parse_args(["-c", "4", "-g", "9"]).unwrap()).unwrap();
+    expectEq(gg, 4, "a group larger than a line is the whole line");
+}
+
+func test_layout_errors(): void {
+    expect(layout(parse_args(["-c", "257"]).unwrap()).is_err(), "too many columns");
+    expect(layout(parse_args(["-i", "-c", "300"]).unwrap()).is_ok(), "-i has no maximum");
+    expect(layout(parse_args(["-p", "-c", "-1"]).unwrap()).is_err(), "negative columns");
+}
+
+func test_usage_errors(): void {
+    expectEq(parse_args(["-z"]).unwrap_err(), "invalid option '-z'", "unknown option");
+    expectEq(parse_args(["-c"]).unwrap_err(), "option '-c' requires an argument", "missing value");
+    expectEq(parse_args(["a", "b", "c"]).unwrap_err(), "extra operand 'c'", "three operands");
+    expect(plain_message("invalid number of columns (max. 256)."), "printed without the Try line");
+    expect(!plain_message("invalid option '-z'"), "printed with the Try line");
 }
 
 func test_help_and_version(): void {
-    expect(parse_args(["--help"]).unwrap().help, "--help");
     expect(parse_args(["-h"]).unwrap().help, "-h");
+    expect(parse_args(["--help"]).unwrap().help, "--help");
+    expect(parse_args(["-v"]).unwrap().version, "-v");
     expect(parse_args(["--version"]).unwrap().version, "--version");
-    expect(parse_args(["-V"]).unwrap().version, "-V");
-}
-
-func test_value_option_forms(): void {
-    expectEq(parse_args(["-g", "Hi"]).unwrap().greeting, "Hi", "-g VALUE");
-    expectEq(parse_args(["--greeting", "Hi"]).unwrap().greeting, "Hi", "--greeting VALUE");
-    expectEq(parse_args(["--greeting=a=b"]).unwrap().greeting, "a=b", "--greeting=VALUE keeps '='");
-}
-
-func test_double_dash_ends_options(): void {
-    let opts = parse_args(["hello", "--", "--shout"]).unwrap();
-    expect(!opts.shout, "--shout after -- is an operand");
-    expectEq(opts.operands[0], "--shout", "operand");
-}
-
-func test_lone_dash_is_operand(): void {
-    let opts = parse_args(["hello", "-"]).unwrap();
-    expectEq(opts.operands[0], "-", "operand");
-}
-
-func test_unknown_option(): void {
-    expectEq(parse_args(["--nope"]).unwrap_err(), "unknown option '--nope'", "error message");
-}
-
-func test_missing_value(): void {
-    expectEq(parse_args(["-g"]).unwrap_err(), "option '-g' requires a value", "error message");
-}
-
-func test_flag_with_value(): void {
-    expectEq(parse_args(["--shout=1"]).unwrap_err(), "option '--shout' does not take a value", "error message");
 }

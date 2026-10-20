@@ -1,0 +1,2 @@
+Hello, xxd!
+Bytes in, hex out.

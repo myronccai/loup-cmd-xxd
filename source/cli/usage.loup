@@ -1,28 +1,30 @@
 @mode(host.dual)
 
-from appinfo import (APP_NAME, APP_VERSION, APP_SUMMARY);
-from cli.args import (DEFAULT_GREETING);
+from appinfo import (APP_NAME, APP_VERSION);
 
 pub func usage(): string {
     let lines = [
-        i"usage: {$ APP_NAME $} [OPTIONS] COMMAND [ARGS...]",
-        "",
-        APP_SUMMARY,
-        "",
-        "Commands:",
-        "  hello [NAME]          Print a greeting (NAME defaults to 'world')",
-        "  help                  Show this help",
-        "",
+        "Usage:",
+        i"       {$ APP_NAME $} [options] [infile [outfile]]",
+        "    or",
+        i"       {$ APP_NAME $} -r [-s [-]offset] [-c cols] [-ps] [infile [outfile]]",
         "Options:",
-        i"  -g, --greeting TEXT   Greeting used by 'hello' (default: {$ DEFAULT_GREETING $})",
-        "      --shout           Print the greeting in upper case",
-        "  -v, --verbose         Print diagnostic messages to stderr",
-        "  -h, --help            Show this help and exit",
-        "  -V, --version         Show the version and exit",
+        "    -b          binary digit dump (incompatible with -ps, -i). Default hex.",
+        "    -c cols     format <cols> octets per line. Default 16 (-i: 12, -ps: 30, -b: 6).",
+        "    -g bytes    number of octets per group in normal output. Default 2 (-b: 1).",
+        "    -h          print this summary.",
+        "    -i          output in C include file style.",
+        "    -l len      stop after <len> octets.",
+        "    -ps         output in postscript plain hexdump style.",
+        "    -r          reverse operation: convert (or patch) hexdump into binary.",
+        "    -r -s off   revert with <off> added to file positions found in hexdump.",
+        "    -s [+][-]seek  start at <seek> bytes abs. (or +: rel.) infile offset.",
+        "    -u          use upper case hex letters.",
+        "    -v          show version.",
     ];
     return lines.join("\n");
 }
 
 pub func version_line(): string {
-    return i"{$ APP_NAME $} {$ APP_VERSION $}";
+    return i"{$ APP_NAME $} (loup-cmd-{$ APP_NAME $}) {$ APP_VERSION $}";
 }

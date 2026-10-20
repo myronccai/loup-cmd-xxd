@@ -1,98 +1,238 @@
 @mode(host.dual)
 
-# Command-line parsing. Loup 1.26 has no CLI library, so arguments are
-# parsed by hand into an Options value.
+# Command-line parsing for xxd. xxd has its own rules, which this follows:
+# options come before the operands; an option is recognised by its first
+# letter (`-u`, `-upper` and `--upper` are the same); values follow the
+# letter directly (`-c8`) or as the next argument (`-c 8`, `-cols 8`);
+# numbers are C numbers (`0x10`, `020`, `16`); `--` ends the options.
 #
-# Grammar: [OPTIONS] COMMAND [OPERANDS...]
-#   Options may appear anywhere before `--`; everything after `--` is an
-#   operand. Value options accept `--name VALUE` and `--name=VALUE`.
-
-pub const DEFAULT_GREETING: string = "Hello";
+# Usage: xxd [OPTIONS] [INFILE [OUTFILE]]
 
 pub struct Options {
-    pub command: string;
-    pub operands: list[string];
-    pub help: bool;
-    pub version: bool;
-    pub verbose: bool;
-    pub shout: bool;
-    pub greeting: string;
+    pub var help: bool;
+    pub var version: bool;
+    pub var mode: string;          # "hex" (default), "plain" (-p) or "include" (-i)
+    pub var bits: bool;            # -b: binary digits, in the default or -i style
+    pub var upper: bool;           # -u
+    pub var revert: bool;          # -r
+    pub var cols: int;             # -c; 0 with cols_given false means the mode's default
+    pub var cols_given: bool;
+    pub var group: int;            # -g; -1 means the mode's default
+    pub var length: int;           # -l; negative means no limit
+    pub var seek: int;             # -s value
+    pub var seek_given: bool;
+    pub var seek_relative: bool;   # -s +N
+    pub var seek_from_end: bool;   # -s -N
+    pub var infile: string;        # "" or "-" for standard input
+    pub var outfile: string;       # "" or "-" for standard output
+}
+
+# A usage error, with whether xxd reports it with the bare message (true)
+# or as a usage problem followed by the "Try" line (false).
+pub func plain_message(msg: string): bool {
+    return msg.startsWith("only one of") or msg.startsWith("invalid number of columns");
+}
+
+func digit_value(ch: string): int {
+    return "0123456789abcdef".index_of(ch.toLowerCase());
+}
+
+# C's strtol(text, NULL, 0): optional blanks and sign, then a hexadecimal
+# (0x...), octal (0...) or decimal number; parsing stops at the first
+# character that is not a digit, and no digits at all give 0.
+pub func c_number(text: string): int {
+    var i = 0;
+    while (i < text.len() and (text.slice(i, i + 1) == " " or text.slice(i, i + 1) == "\t")) {
+        i += 1;
+    }
+    var negative = false;
+    if (i < text.len() and (text.slice(i, i + 1) == "-" or text.slice(i, i + 1) == "+")) {
+        negative = text.slice(i, i + 1) == "-";
+        i += 1;
+    }
+    var base = 10;
+    if (i + 1 < text.len() and text.slice(i, i + 1) == "0" and text.slice(i + 1, i + 2).toLowerCase() == "x"
+        and i + 2 < text.len() and digit_value(text.slice(i + 2, i + 3)) >= 0) {
+        base = 16;
+        i += 2;
+    } else if (i < text.len() and text.slice(i, i + 1) == "0") {
+        base = 8;
+    }
+    var value = 0;
+    while (i < text.len()) {
+        let d = digit_value(text.slice(i, i + 1));
+        if (d < 0 or d >= base) {
+            break;
+        }
+        if (value < 1000000000000000) {
+            value = value * base + d;
+        }
+        i += 1;
+    }
+    return if (negative) { -value } else { value };
+}
+
+pub func default_options(): Options {
+    return Options(
+        help = false,
+        version = false,
+        mode = "hex",
+        bits = false,
+        upper = false,
+        revert = false,
+        cols = 0,
+        cols_given = false,
+        group = -1,
+        length = -1,
+        seek = 0,
+        seek_given = false,
+        seek_relative = false,
+        seek_from_end = false,
+        infile = "",
+        outfile = "",
+    );
+}
+
+# Selects a dump style: -p excludes -b and -i; -b and -i combine.
+func set_mode(edits opts: Options, mode: string): Result[bool, string] {
+    let clash = if (mode == "bits") {
+        opts.mode == "plain"
+    } else if (mode == "plain") {
+        opts.bits or opts.mode == "include"
+    } else {
+        opts.mode == "plain"
+    };
+    if (clash) {
+        return Err("only one of -b, -e, -u, -p, -i can be used");
+    }
+    if (mode == "bits") {
+        opts.bits = true;
+    } else {
+        opts.mode = mode;
+    }
+    return Ok(true);
+}
+
+# The value of an option such as -c: the rest of the word, unless the word
+# is the long spelling (`-cols`, given as `long_tail`), then the next argument.
+func option_value(argv: list[string], i: int, word: string, long_tail: string): Result[string, string] {
+    let rest = word.slice(2);
+    if (rest.len() > 0 and !rest.startsWith(long_tail)) {
+        return Ok(rest);
+    }
+    if (i + 1 >= argv.len()) {
+        return Err(i"option '{$ argv[i] $}' requires an argument");
+    }
+    return Ok(argv[i + 1]);
 }
 
 pub func parse_args(argv: list[string]): Result[Options, string] {
-    var command = "";
-    var operands: list[string] = [];
-    var help = false;
-    var version = false;
-    var verbose = false;
-    var shout = false;
-    var greeting = DEFAULT_GREETING;
-    var only_operands = false;
-
+    var opts = default_options();
     var i = 0;
     while (i < argv.len()) {
         let arg = argv[i];
-        i += 1;
-
-        if (only_operands or arg == "-" or !arg.startsWith("-")) {
-            if (command.is_empty()) {
-                command = arg;
-            } else {
-                operands.push(arg);
+        # `--name` is read as `-name`.
+        let word = if (arg.startsWith("--") and arg.len() > 2) { arg.slice(1) } else { arg };
+        if (word == "--") {
+            i += 1;
+            break;
+        }
+        if (!word.startsWith("-") or word.len() < 2) {
+            break;
+        }
+        let letter = word.slice(1, 2);
+        var used_next = false;
+        if (letter == "b") {
+            set_mode(edits: opts, "bits")?;
+        } else if (letter == "p") {
+            set_mode(edits: opts, "plain")?;
+        } else if (letter == "i") {
+            set_mode(edits: opts, "include")?;
+        } else if (letter == "u") {
+            opts.upper = true;
+        } else if (letter == "r") {
+            opts.revert = true;
+        } else if (letter == "h") {
+            opts.help = true;
+            return Ok(opts);
+        } else if (letter == "v") {
+            opts.version = true;
+            return Ok(opts);
+        } else if (letter == "c" and !word.slice(2).startsWith("apitalize")) {
+            let value = option_value(argv, i, word, "ols")?;
+            used_next = value != word.slice(2);
+            opts.cols = c_number(value);
+            opts.cols_given = true;
+        } else if (letter == "g") {
+            let value = option_value(argv, i, word, "roup")?;
+            used_next = value != word.slice(2);
+            opts.group = c_number(value);
+        } else if (letter == "l") {
+            let value = option_value(argv, i, word, "en")?;
+            used_next = value != word.slice(2);
+            opts.length = c_number(value);
+        } else if (letter == "s") {
+            let rest = word.slice(2);
+            let long_form = rest.startsWith("kip") or rest.startsWith("eek");
+            var value = rest;
+            if (rest.len() == 0 or long_form) {
+                if (i + 1 >= argv.len()) {
+                    return Err(i"option '{$ arg $}' requires an argument");
+                }
+                value = argv[i + 1];
+                used_next = true;
             }
-            continue;
-        }
-        if (arg == "--") {
-            only_operands = true;
-            continue;
-        }
-
-        # Split `--name=value` into its name and inline value.
-        var name = arg;
-        var inline_value: Option[string] = None;
-        if (arg.startsWith("--") and arg.contains("=")) {
-            let parts = arg.split("=");
-            name = parts[0];
-            inline_value = Some(parts.slice(1).join("="));
-        }
-
-        if (name == "-g" or name == "--greeting") {
-            match inline_value {
-                Some(v) => { greeting = v; },
-                None => {
-                    if (i >= argv.len()) {
-                        return Err(i"option '{$ name $}' requires a value");
-                    }
-                    greeting = argv[i];
-                    i += 1;
-                },
+            opts.seek_given = true;
+            opts.seek_relative = value.startsWith("+");
+            var skip = if (opts.seek_relative) { 1 } else { 0 };
+            opts.seek_from_end = value.slice(skip).startsWith("-");
+            if (opts.seek_from_end) {
+                skip += 1;
             }
-            continue;
-        }
-
-        if (inline_value.is_some()) {
-            return Err(i"option '{$ name $}' does not take a value");
-        }
-        if (name == "-h" or name == "--help") {
-            help = true;
-        } else if (name == "-V" or name == "--version") {
-            version = true;
-        } else if (name == "-v" or name == "--verbose") {
-            verbose = true;
-        } else if (name == "--shout") {
-            shout = true;
+            opts.seek = c_number(value.slice(skip));
         } else {
-            return Err(i"unknown option '{$ name $}'");
+            return Err(i"invalid option '{$ arg $}'");
         }
+        i += if (used_next) { 2 } else { 1 };
     }
 
-    return Ok(Options(
-        command = command,
-        operands = operands,
-        help = help,
-        version = version,
-        verbose = verbose,
-        shout = shout,
-        greeting = greeting,
-    ));
+    let rest = argv.slice(i);
+    if (rest.len() > 2) {
+        return Err(i"extra operand '{$ rest[2] $}'");
+    }
+    if (rest.len() >= 1) {
+        opts.infile = rest[0];
+    }
+    if (rest.len() == 2) {
+        opts.outfile = rest[1];
+    }
+    return Ok(opts);
+}
+
+# The columns and group size after the mode's defaults are applied, or the
+# "invalid number of columns" error. Returns (cols, group).
+pub func layout(opts: Options): Result[(int, int), string] {
+    var cols = opts.cols;
+    if (!opts.cols_given or (cols == 0 and opts.mode != "plain")) {
+        cols = if (opts.mode == "plain") {
+            30
+        } else if (opts.bits) {
+            6
+        } else if (opts.mode == "include") {
+            12
+        } else {
+            16
+        };
+    }
+    var group = opts.group;
+    if (group < 0) {
+        group = if (opts.mode != "hex") { 0 } else if (opts.bits) { 1 } else { 2 };
+    }
+    if ((opts.mode == "plain" and cols < 0) or (opts.mode != "plain" and cols < 1) or (opts.mode == "hex" and cols > 256)) {
+        return Err("invalid number of columns (max. 256).");
+    }
+    if (group < 1 or group > cols) {
+        group = cols;
+    }
+    return Ok((cols, group));
 }

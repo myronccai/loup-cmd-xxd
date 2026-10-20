@@ -1,7 +1,10 @@
 # AGENTS.md
 
-This repository is a GitHub template for building a command-line application
-in the Loup programming language. The program is built as a native executable.
+This repository recreates `xxd` (the hex dump tool that ships with Vim) in
+the Loup programming language, as part of the loup-cmd series of example
+applications: default, bits, plain and C-include dumps, and `-r` to turn a
+dump back into bytes. The program is `host.dual` Loup built as a native
+executable.
 
 ## Skills
 
@@ -20,23 +23,23 @@ mistakes. Load those only as needed.
 ```text
 .
 ├── package.lppkg                # Loup manifest: name, version, toolchain, [build] entry, [test] pattern
-├── Makefile                     # run, check, test, build, ci, clean
+├── Makefile                     # run, check, test, build, e2e, ci, clean
 ├── source/                      # all Loup code; modules import each other by path from here
 │   ├── main.loup                # entry point: func main() calls run(runtime.args())
-│   ├── appinfo.loup             # APP_NAME, APP_VERSION, APP_SUMMARY, exit statuses
+│   ├── appinfo.loup             # APP_NAME, APP_VERSION, APP_SUMMARY, xxd's exit statuses (0-5, 255)
 │   ├── cli/
-│   │   ├── args.loup            # struct Options, parse_args()
+│   │   ├── args.loup            # struct Options, parse_args(): xxd's option rules; c_number(), layout()
 │   │   ├── usage.loup           # usage(), version_line()
-│   │   └── app.loup             # run(), dispatch(): routes commands, maps errors to exit statuses
-│   └── commands/                # one module per command
-│       └── hello.loup           # sample command: run_hello()
-├── tests/                       # tests: <module>_test.loup files with func test_*(): void
-│   ├── app_test.loup
-│   ├── args_test.loup
-│   └── hello_test.loup
-├── specs/                       # feature specs: <feature>/requirements.md, design.md, tasks.md
-│   ├── README.md
-│   └── command-line-interface/
+│   │   └── app.loup             # run(): parse, -h/-v, columns, run_xxd, exit status
+│   └── commands/
+│       ├── xxd.loup             # seek_start(), dump_end(), render_dump(), run_xxd(): input and output
+│       ├── dump.loup            # dump_lines(), plain_lines(), include_lines(), c_name()
+│       └── revert.loup          # revert_dump(): -r and -r -p, a port of xxd's huntype()
+├── tests/
+│   ├── *_test.loup              # unit tests: func test_*(): void
+│   ├── e2e.sh                   # end-to-end tests of the native binary
+│   └── fixtures/sample.txt    # sample input
+├── specs/xxd/                   # requirements.md, design.md, tasks.md
 ├── skills/loup-programmer/      # the Loup skill and its references
 ├── .github/workflows/ci.yml     # installs Loup and runs `make ci`
 └── build/                       # build output (git-ignored)
@@ -49,14 +52,15 @@ and `clang` 17 or later for native builds.
 
 | Task | Command | Notes |
 |------|---------|-------|
-| Run from source | `make run ARGS="hello Ann --shout"` | `loup run source/main.loup -- ARGS` |
+| Run from source | `make run ARGS="-g 1 -l 32 README.md"` | `loup run source/main.loup -- ARGS` |
 | Type-check | `make check` | checks `source/main.loup` and every module it imports; tests are not checked |
 | Run all tests | `make test` | every `tests/*_test.loup` |
-| Run matching tests | `make test TEST_ARGS="--filter value"` | tests whose name contains `value` |
+| Run matching tests | `make test TEST_ARGS="--filter plain"` | tests whose name contains `plain` |
 | Run one test file | `make test TEST_ARGS="--file tests/args_test.loup"` | |
-| Build | `make build` | native binary at `build/myapp` |
-| Run the binary | `build/myapp --help` | |
-| Everything CI runs | `make ci` | check, test, build, then `build/myapp --version` |
+| Build | `make build` | native binary at `build/xxd` |
+| Run the binary | `build/xxd --help` | |
+| End-to-end tests | `make e2e` | runs `tests/e2e.sh build/xxd`: output compared byte for byte |
+| Everything CI runs | `make ci` | check, test, build, e2e, then `build/xxd --version` |
 | Clean | `make clean` | removes `build/` and `.temp/` |
 
 Run `make ci` before reporting a change as done. `loup run` and the native
@@ -70,21 +74,21 @@ both, and sets `LOUPPATH=source` for tests.
 
 ## Making a change
 
-1. Write or update the spec in `specs/<feature>/` (see [specs/README.md](specs/README.md)).
+1. Update the spec in `specs/xxd/` (see [specs/README.md](specs/README.md)).
 2. Change the code under `source/`.
-3. Add or update tests in `tests/`.
+3. Add or update unit tests in `tests/` and cases in `tests/e2e.sh`.
 4. Run `make ci`.
-5. Tick the finished tasks in `specs/<feature>/tasks.md`.
+5. Tick the finished tasks in `specs/xxd/tasks.md`.
 
-To add a command:
+Keep behaviour in pure functions that return values (the dump functions
+return the output as a list of pieces; `revert_dump` returns the bytes and
+any error) so unit tests can check them; only `run_xxd` reads and writes.
+Unit tests run from the repository root, so they open fixtures as
+`tests/fixtures/...`, and build `bytes` with `bytesFromInts([...])`.
 
-1. Create `source/commands/<name>.loup` with `@mode(host.dual)` and
-   `pub func run_<name>(opts: Options): int`, returning an exit status from
-   `appinfo`.
-2. Add an arm for it to `dispatch` in `source/cli/app.loup`.
-3. Describe it in `usage()` in `source/cli/usage.loup`.
-4. Add any new options to `Options` and `parse_args` in `source/cli/args.loup`.
-5. Add `tests/<name>_test.loup`.
+The layout rules in `dump.loup` and the parser in `revert.loup` mirror
+xxd.c; check any change against the real `xxd` on many random inputs, not
+only the tests.
 
 ## Conventions
 
@@ -98,6 +102,15 @@ To add a command:
 - The native build supports less than `loup run` does. For example,
   `list.is_empty()` fails native codegen (`E-CODEGEN-UNHANDLED-METHOD`); use
   `len() == 0`.
+- Native-build pitfalls this code works around: construct a struct only in
+  the module that defines it (hence `default_options`, `new_reverted`); do
+  not put escapes such as `\n` inside `i"..."`; index `bytes` (`data[k]`)
+  instead of iterating them with `for`; `IoError` cannot be caught, so check
+  `exists()` and `isDir()` before reading; build large outputs as a list of
+  pieces and `join("")` them once (string `+=` in a long loop is quadratic
+  natively); write binary output to `/dev/stdout` with a single
+  `writeBytes` call (it reopens and truncates the file).
+- Struct fields that are assigned after construction must be `pub var`.
 - Keep `APP_VERSION` in `source/appinfo.loup` equal to `version` in
   `package.lppkg`.
 - The skill's examples use the `loup init` layout (`src/`, `tests/`, and
