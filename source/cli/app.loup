@@ -1,5 +1,12 @@
 @mode(host.dual)
 
+# The command-line driver of xxd: parses argv, answers -h and -v, applies
+# the mode's default layout, runs xxd and returns its exit status.
+#
+# Runtime: host.dual. Compiled into the native binary build/xxd by
+# `make build`; `loup run source/main.loup` interprets the same code, and
+# tests/app_test.loup calls run() directly under Stage0 (`make test`).
+
 from appinfo import (APP_NAME, EXIT_OK, EXIT_USAGE);
 from cli.args import (parse_args, plain_message, layout);
 from cli.usage import (usage, version_line);

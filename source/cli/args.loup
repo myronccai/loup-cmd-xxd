@@ -7,6 +7,15 @@
 # numbers are C numbers (`0x10`, `020`, `16`); `--` ends the options.
 #
 # Usage: xxd [OPTIONS] [INFILE [OUTFILE]]
+#
+# Runtime: host.dual. Compiled into the native binary build/xxd by
+# `make build`; `loup run source/main.loup` interprets the same code, and
+# tests/args_test.loup exercises it under Stage0 (`make test`).
+#
+# Structure: c_number (C's strtol), then parse_args, which reads options by
+# first letter; the defaults that depend on the mode (columns, group size)
+# are applied afterwards by layout(), because -c and -g may come before or
+# after -b, -p and -i.
 
 pub struct Options {
     pub var help: bool;

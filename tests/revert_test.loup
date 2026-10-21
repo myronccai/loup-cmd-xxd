@@ -1,5 +1,13 @@
 @mode(host.dual)
 
+# Unit tests for -r (source/commands/revert.loup): hex digits, the default
+# and plain styles, offsets and gaps, -s with patching, and the offset
+# limit.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this file
+# with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test per
+# `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from commands.revert import (hex_value, revert_dump);
 

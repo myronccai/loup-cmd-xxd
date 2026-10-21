@@ -9,6 +9,10 @@
 # there when the output is a file (in a pipe that is an error, as xxd
 # cannot seek backwards). With -p the input is just hex pairs, with white
 # space anywhere.
+#
+# Runtime: host.dual. Compiled into the native binary build/xxd by
+# `make build`; `loup run source/main.loup` interprets the same code, and
+# tests/revert_test.loup exercises it under Stage0 (`make test`).
 
 # The output is built in memory, so offsets past this are refused (xxd
 # itself would pad a pipe with zeros or seek a sparse file).
@@ -54,6 +58,15 @@ func put(edits r: Reverted, at: int, value: int): void {
 # place) or a pipe. `initial` is the output file's current contents: like
 # xxd, -r patches an existing file instead of truncating it.
 pub func revert_dump(text: bytes, cols: int, plain: bool, base_off: int, seekable: bool, initial: list[int]): Reverted {
+    # The scanner state, as in xxd's huntype: n1, n2, n3 are the values of
+    # the last three characters read (-1 for one that is not a hex digit), so
+    # a byte is complete when n2 and n1 are both digits. `want` is the offset
+    # the dump asks for (first parsed from the line's offset field, then
+    # counted up) and `have` the output position. `p` counts the bytes taken
+    # from the current line; p >= cols means "still in the offset field",
+    # which is how every line starts. `ignore_garbage` skips non-hex text
+    # until the first digit of a line. Codes: 9 tab, 10 newline, 13 CR,
+    # 32 space.
     var r = new_reverted(initial);
     let n = text.len();
     var k = 0;

@@ -1,5 +1,11 @@
 @mode(host.dual)
 
+# Help and version text for xxd: usage() is printed by -h, version_line()
+# by -v.
+#
+# Runtime: host.dual. Compiled into the native binary build/xxd by
+# `make build`; `loup run source/main.loup` interprets the same code.
+
 from appinfo import (APP_NAME, APP_VERSION);
 
 pub func usage(): string {

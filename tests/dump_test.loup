@@ -1,5 +1,12 @@
 @mode(host.dual)
 
+# Unit tests for the dump styles (source/commands/dump.loup): the lookup
+# tables, offsets, hex and bits lines, -p, -i and C names.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this file
+# with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test per
+# `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from commands.dump import (hex_offset, hex_table, bits_table, char_table, dump_lines, plain_lines, include_lines, c_name);
 

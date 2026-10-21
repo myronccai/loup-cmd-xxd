@@ -2,6 +2,13 @@
 
 # xxd: reads the input, applies -s and -l, and writes a dump, or (with -r)
 # converts a dump back into bytes.
+#
+# Runtime: host.dual. Compiled into the native binary build/xxd by
+# `make build`; `loup run source/main.loup` interprets the same code, and
+# tests/xxd_test.loup checks the seek and render helpers under Stage0
+# (`make test`). -r writes its output with a single writeBytes at the end:
+# the native writeBytes("/dev/stdout") opens with truncation, so anything
+# printed to a redirected stdout before it would be lost.
 
 from appinfo import (APP_NAME, EXIT_OK, EXIT_INPUT, EXIT_OUTPUT, EXIT_SEEK, EXIT_SEEK_BACK, EXIT_CANNOT_REVERT);
 from cli.args import (Options);
@@ -100,6 +107,8 @@ pub func run_xxd(opts: Options, cols: int, group: int): int {
         var initial: list[int] = [];
         var seekable = true;
         if (to_stdout(opts.outfile)) {
+            # /dev/stdout is a regular file only when stdout is redirected to
+            # one; a pipe or a terminal cannot be rewritten in place.
             seekable = isFile("/dev/stdout");
         } else if (exists(opts.outfile)) {
             initial = list_of(readBytes(opts.outfile));
@@ -119,6 +128,7 @@ pub func run_xxd(opts: Options, cols: int, group: int): int {
         return EXIT_OK;
     }
 
+    # Standard input can seek only when it is redirected from a regular file.
     let seekable = !from_stdin or isFile("/dev/stdin");
     let start = seek_start(data.len(), opts, seekable);
     if (start < 0) {
