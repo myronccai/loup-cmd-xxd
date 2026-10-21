@@ -15,10 +15,7 @@ const SPACES: string = "                                                        
 # Two hex digits for every byte value, in lower or upper case.
 pub func hex_table(upper: bool): list[string] {
     let digits = if (upper) { HEX_DIGITS.toUpperCase() } else { HEX_DIGITS };
-    var table: list[string] = [];
-    for (b in 0..256) {
-        table.push(digits.slice(b / 16, b / 16 + 1) + digits.slice(b % 16, b % 16 + 1));
-    }
+    let table: list[string] = [digits.slice(b / 16, b / 16 + 1) + digits.slice(b % 16, b % 16 + 1) for b in 0..256];
     return table;
 }
 
@@ -27,10 +24,8 @@ pub func bits_table(): list[string] {
     var table: list[string] = [];
     for (b in 0..256) {
         var text = "";
-        var bit = 128;
-        while (bit > 0) {
+        for (var bit = 128; bit > 0; bit = bit >> 1) {
             text += if ((b & bit) != 0) { "1" } else { "0" };
-            bit = bit / 2;
         }
         table.push(text);
     }
@@ -39,21 +34,19 @@ pub func bits_table(): list[string] {
 
 # The character column: printable ASCII as itself, anything else as `.`.
 pub func char_table(): list[string] {
-    var table: list[string] = [];
-    for (b in 0..256) {
-        table.push(if (b > 31 and b < 127) { str(char.of(b)) } else { "." });
-    }
+    let table: list[string] = [if (b > 31 and b < 127) { str(char.of(b)) } else { "." } for b in 0..256];
     return table;
 }
 
 # A file offset as at least eight lower-case hex digits (C's "%08lx").
 pub func hex_offset(n: int): string {
+    # At least one digit, even for offset 0, then zero-padded below.
     var digits = "";
     var v = n;
-    while (v > 0) {
+    do {
         digits = HEX_DIGITS.slice(v % 16, v % 16 + 1) + digits;
         v = v / 16;
-    }
+    } while (v > 0);
     while (digits.len() < 8) {
         digits = "0" + digits;
     }
@@ -102,23 +95,25 @@ pub func dump_lines(data: bytes, start: int, end: int, cols: int, group: int, up
     return out;
 }
 
-# -p: bare hex digits, `cols` bytes per line; 0 means a single line.
+# -p: bare hex digits, `cols` bytes per line; 0 means a single line (a
+# lone newline when there is nothing to dump). Each line is one slice of
+# the input turned into hex by bytes.toHex().
 pub func plain_lines(data: bytes, start: int, end: int, cols: int, upper: bool): list[string] {
-    let cells = hex_table(upper);
     var out: list[string] = [];
-    var left = cols;
-    for (pos in start..end) {
-        out.push(cells[data[pos]]);
-        if (cols > 0) {
-            left -= 1;
-            if (left == 0) {
-                out.push("\n");
-                left = cols;
-            }
+    if (start >= end) {
+        if (cols == 0) {
+            out.push("\n");
         }
+        return out;
     }
-    if (cols == 0 or left < cols) {
+    let step = if (cols > 0) { cols } else { end - start };
+    var pos = start;
+    while (pos < end) {
+        let stop = if (end - pos < step) { end } else { pos + step };
+        let hex: string = data.slice(pos, stop).toHex();
+        out.push(if (upper) { hex.toUpperCase() } else { hex });
         out.push("\n");
+        pos = stop;
     }
     return out;
 }

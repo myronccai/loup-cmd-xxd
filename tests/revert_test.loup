@@ -10,6 +10,8 @@
 
 from debug.assert import (expect, expectEq);
 from commands.revert import (hex_value, revert_dump);
+from commands.dump import (plain_lines, dump_lines);
+from system.text import (fromHex);
 
 func text(s: string): bytes {
     var codes: list[int] = [];
@@ -73,4 +75,27 @@ func test_plain_style(): void {
 func test_too_far(): void {
     let none: list[int] = [];
     expect(revert_dump(text("ffffffff: 41\n"), 16, false, 0, true, none).error != "", "offsets past 64 MiB are refused");
+}
+
+# Round trips, with system.text.fromHex (Stage0 only) as the oracle for
+# what the hex digits stand for: -r -p and -r undo -p and the default dump.
+func test_round_trips(): void {
+    var codes: list[int] = [];
+    for (k in 0..100) {
+        codes.push((k * 53 + 7) % 256);
+    }
+    let data = bytesFromInts(codes);
+    let plain = plain_lines(data, 0, 100, 30, false).join("");
+    let expected = fromHex(plain.split("\n").join("")).unwrap();
+    expectEq(expected.len(), 100, "oracle length");
+    let none: list[int] = [];
+    let from_plain = revert_dump(text(plain), 30, true, 0, true, none).data;
+    expectEq(show(from_plain), show(codes), "-r -p");
+    var oracle: list[int] = [];
+    for (k in 0..expected.len()) {
+        oracle.push(expected[k]);
+    }
+    expectEq(show(from_plain), show(oracle), "the same bytes as fromHex");
+    let dumped = dump_lines(data, 0, 100, 16, 2, false, false).join("");
+    expectEq(show(rev(dumped, false, true)), show(codes), "-r");
 }

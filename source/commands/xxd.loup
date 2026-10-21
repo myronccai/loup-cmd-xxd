@@ -54,9 +54,10 @@ pub func render_dump(data: bytes, opts: Options, cols: int, group: int, start: i
     let end = dump_end(data.len(), start, opts.length);
     let named = opts.infile != "" and opts.infile != "-";
     let pieces = match opts.mode {
-        "plain" => plain_lines(data, start, end, cols, opts.upper),
-        "include" => include_lines(data, start, end, cols, opts.upper, opts.bits, if (named) { c_name(opts.infile) } else { "" }),
-        _ => dump_lines(data, start, end, cols, group, opts.upper, opts.bits),
+        "plain" => plain_lines(data, start, end, cols, upper = opts.upper),
+        "include" => include_lines(data, start, end, cols, upper = opts.upper, bits = opts.bits,
+            name = if (named) { c_name(opts.infile) } else { "" }),
+        _ => dump_lines(data, start, end, cols, group, upper = opts.upper, bits = opts.bits),
     };
     return pieces.join("");
 }

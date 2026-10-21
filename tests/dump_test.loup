@@ -9,6 +9,7 @@
 
 from debug.assert import (expect, expectEq);
 from commands.dump import (hex_offset, hex_table, bits_table, char_table, dump_lines, plain_lines, include_lines, c_name);
+from system.text import (toHex);
 
 func sample(): bytes {
     return bytesFromInts([72, 105, 0, 127, 128, 255, 10]);
@@ -67,4 +68,26 @@ func test_include(): void {
 func test_c_names(): void {
     expectEq(c_name("dir/file.bin"), "dir_file_bin", "punctuation becomes _");
     expectEq(c_name("3d.obj"), "__3d_obj", "a leading digit gets __");
+}
+
+# system.text.toHex (Stage0 only, so it serves only as a test oracle) gives
+# the same digits as the -p lines joined together.
+func test_plain_agrees_with_to_hex(): void {
+    var codes: list[int] = [];
+    for (k in 0..300) {
+        codes.push((k * 37 + 11) % 256);
+    }
+    let data = bytesFromInts(codes);
+    expectEq(plain_lines(data, 0, 300, 0, false).join(""), toHex(data) + "\n", "-c 0: one line");
+    let lines = plain_lines(data, 0, 300, 30, false).join("").split("\n");
+    expectEq(lines.len(), 11, "ten lines of 30 bytes and an empty piece");
+    expectEq(lines.join(""), toHex(data), "the same digits");
+    expectEq(plain_lines(data, 0, 3, 30, true).join(""), toHex(data.slice(0, 3)).toUpperCase() + "\n", "-u");
+    expectEq(plain_lines(data, 5, 5, 30, false).len(), 0, "nothing to dump");
+    expectEq(plain_lines(data, 5, 5, 0, false).join(""), "\n", "-c 0 with nothing to dump");
+}
+
+func test_offsets_have_eight_digits(): void {
+    expectEq(hex_offset(0), "00000000", "zero");
+    expectEq(hex_offset(4294967296), "100000000", "more than eight digits");
 }

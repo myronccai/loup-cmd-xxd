@@ -167,6 +167,7 @@ check "-p" 0 '48656c6c6f2c20787864210a427974657320696e2c20686578206f75742e
 0a
 ' -p sample.txt
 check "-p -c 4 -l 10" 0 $'48656c6c\n6f2c2078\n7864\n' -p -c 4 -l 10 sample.txt
+check "-p -u -c 5 -l 10" 0 $'48656C6C6F\n2C20787864\n' -p -u -c 5 -l 10 sample.txt
 check "-ps -c 0"          0 $'48656c6c6f2c20787864210a427974657320696e2c20686578206f75742e0a\n' -ps -c 0 sample.txt
 check "-p empty"          0 '' -p "$TMP/empty"
 check "-p -c 0 empty"     0 $'\n' -p -c 0 "$TMP/empty"
