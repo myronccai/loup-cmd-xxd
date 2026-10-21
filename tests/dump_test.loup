@@ -1,7 +1,8 @@
 @mode(host.dual)
 
 # Unit tests for the dump styles (source/commands/dump.loup): the lookup
-# tables, offsets, hex and bits lines, -p, -i and C names.
+# tables, offsets, hex and bits lines, little-endian (-e) lines, -p, -i and
+# C names. The -e lines were checked against xxd 2024-12-07.
 #
 # Runtime: host.dual, run by the test runner: `make test` interprets this file
 # with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test per
@@ -13,11 +14,19 @@ from commands.dump import (hex_table, bits_table, char_table, digit_table, space
 from commands.sink import (Sink, collector, collected, file_sink, sink_put, sink_flush);
 from io.fs import (createDir, readText);
 from system.text import (toHex);
+from core.interchange import (Endianness);
 
 # The dump styles write into a Sink; these collect their output as text.
 func dump(data: bytes, start: int, end: int, cols: int, group: int, upper: bool, bits: bool): string {
     var s = collector();
-    dump_lines(data, start, end, cols, group, upper, bits, edits: s);
+    dump_lines(data, start, end, cols, group, upper, bits, Endianness.BigEndian, edits: s);
+    return collected(s);
+}
+
+# The -e dump: each group as a little-endian number.
+func dump_le(data: bytes, start: int, end: int, cols: int, group: int, upper: bool): string {
+    var s = collector();
+    dump_lines(data, start, end, cols, group, upper, false, Endianness.LittleEndian, edits: s);
     return collected(s);
 }
 
@@ -71,6 +80,15 @@ func test_odd_group_size(): void {
 func test_start_offset(): void {
     let out = dump(sample(), 5, 7, 16, 2, false, false);
     expectEq(out, "00000005: ff0a                                     ..\n", "offset of the first byte shown");
+}
+
+func test_little_endian_lines(): void {
+    expectEq(dump_le(sample(), 0, 7, 4, 4, false), "00000000: 7f006948  Hi..\n00000004:   0aff80  ...\n", "a short group keeps its width, digits to the right");
+    expectEq(dump_le(sample(), 0, 7, 8, 4, false), "00000000: 7f006948   0aff80  Hi.....\n", "one short line");
+    expectEq(dump_le(sample(), 0, 7, 6, 4, false), "00000000: 7f006948     ff80  Hi....\n00000006:       0a           .\n", "-c 6: every line ends in half a group");
+    expectEq(dump_le(sample(), 0, 7, 16, 8, false), "00000000:   0aff807f006948                   Hi.....\n", "groups of 8");
+    expectEq(dump_le(sample(), 0, 7, 4, 2, true), "00000000: 6948 7F00  Hi..\n00000004: FF80   0A  ...\n", "groups of 2, upper case");
+    expectEq(dump_le(sample(), 1, 3, 4, 4, false), "00000001:     0069  i.\n", "from an offset");
 }
 
 func test_bits_lines(): void {

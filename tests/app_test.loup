@@ -9,7 +9,7 @@
 # `func test_*()`. It is not part of the binary.
 
 from debug.assert import (expectEq);
-from appinfo import (EXIT_OK, EXIT_USAGE, EXIT_INPUT, EXIT_SEEK);
+from appinfo import (EXIT_OK, EXIT_USAGE, EXIT_INPUT, EXIT_SEEK, EXIT_CANNOT_REVERT);
 from cli.app import (run);
 
 func test_version_succeeds(): void {
@@ -35,4 +35,10 @@ func test_bad_seek(): void {
 func test_usage_errors(): void {
     expectEq(run(["-z"]), EXIT_USAGE, "unknown option");
     expectEq(run(["-c", "999", "tests/fixtures/sample.txt"]), EXIT_USAGE, "too many columns");
+    expectEq(run(["-e", "-g", "3", "tests/fixtures/sample.txt"]), EXIT_USAGE, "-e with groups of 3");
+}
+
+func test_little_endian(): void {
+    expectEq(run(["-e", "-l", "8", "tests/fixtures/sample.txt"]), EXIT_OK, "-e dump");
+    expectEq(run(["-r", "-e", "tests/fixtures/sample.txt"]), EXIT_CANNOT_REVERT, "-e cannot be reverted");
 }

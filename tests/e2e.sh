@@ -148,6 +148,50 @@ IN=sample.txt check_pipe "-s +N in a pipe" 0 "$TMP/want-rel" -s +3 -l 4
 IN=sample.txt check_pipe "-s past the end of a pipe" 4 /dev/null -s 40
 IN=sample.txt check_pipe "-s -N in a pipe" 4 /dev/null -s -4
 
+# --- little-endian groups (-e) ------------------------------------------------
+# Expected output as xxd 2024-12-07 writes it: each group of bytes as one
+# little-endian number, a short group's digits right-aligned in its width.
+
+check "-e" 0 '00000000: 6c6c6548 78202c6f 0a216478 65747942  Hello, xxd!.Byte
+00000010: 6e692073 6568202c 756f2078   0a2e74  s in, hex out..
+' -e sample.txt
+
+check "-e -g 8" 0 '00000000: 78202c6f6c6c6548 657479420a216478  Hello, xxd!.Byte
+00000010: 6568202c6e692073   0a2e74756f2078  s in, hex out..
+' -e -g 8 sample.txt
+
+check "-e -c 12" 0 '00000000: 6c6c6548 78202c6f 0a216478  Hello, xxd!.
+0000000c: 65747942 6e692073 6568202c  Bytes in, he
+00000018: 756f2078   0a2e74           x out..
+' -e -c 12 sample.txt
+
+check "-e -c 6: groups cut by the line" 0 '00000000: 6c6c6548     2c6f  Hello,
+00000006: 64787820     0a21   xxd!.
+0000000c: 65747942     2073  Bytes 
+00000012: 202c6e69     6568  in, he
+00000018: 756f2078     2e74  x out.
+0000001e:       0a           .
+' -e -c 6 sample.txt
+
+check "-e -u -c 10 -g 2" 0 '00000000: 6548 6C6C 2C6F 7820 6478  Hello, xxd
+0000000a: 0A21 7942 6574 2073 6E69  !.Bytes in
+00000014: 202C 6568 2078 756F 2E74  , hex out.
+0000001e:   0A                      .
+' -e -u -c 10 -g 2 sample.txt
+
+check "-e -g 0: one group a line" 0 '00000000: 657479420a21647878202c6f6c6c6548  Hello, xxd!.Byte
+00000010:                         6e692073  s in
+' -e -g 0 -l 20 sample.txt
+
+printf '00000003: 202c6f6c 21647878       0a           lo, xxd!.\n' > "$TMP/want-le"
+IN=sample.txt check_pipe "-e -s +N in a pipe" 0 "$TMP/want-le" -e -s +3 -l 9
+
+check_err "-e -g 3"             1 'xxd: number of octets per group must be a power of 2 with -e.' -e -g 3 sample.txt
+check_err "-e -c 12 -g 0"       1 'xxd: number of octets per group must be a power of 2 with -e.' -e -c 12 -g 0 sample.txt
+check_err "-e and -b"           1 'xxd: only one of -b, -e, -u, -p, -i can be used' -e -b sample.txt
+check_err "-p and -e"           1 'xxd: only one of -b, -e, -u, -p, -i can be used' -p -e sample.txt
+IN=sample.txt check_err "-r -e" 255 'xxd: Sorry, cannot revert this type of hexdump' -r -e
+
 # --- bits, plain and C include -----------------------------------------------
 
 check "-b" 0 '00000000: 01001000 01100101 01101100 01101100 01101111 00101100  Hello,

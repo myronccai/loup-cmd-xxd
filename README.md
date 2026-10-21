@@ -84,6 +84,12 @@ $ build/xxd -g 1 -c 8 -l 16 -u tests/fixtures/sample.txt
 00000008: 78 64 21 0A 42 79 74 65  xd!.Byte
 $ build/xxd -b -l 6 tests/fixtures/sample.txt
 00000000: 01001000 01100101 01101100 01101100 01101111 00101100  Hello,
+$ printf '\x01\x00\x00\x00\xff\xff\xff\xff\x00\x01\x02\x03' | build/xxd -e
+00000000: 00000001 ffffffff 03020100           ............
+$ build/xxd -e -g 8 -c 12 tests/fixtures/sample.txt
+00000000: 78202c6f6c6c6548         0a216478  Hello, xxd!.
+0000000c: 6e69207365747942         6568202c  Bytes in, he
+00000018:   0a2e74756f2078                   x out..
 $ build/xxd -p tests/fixtures/sample.txt
 48656c6c6f2c20787864210a427974657320696e2c20686578206f75742e
 0a
@@ -109,10 +115,11 @@ standard input, without OUTFILE (or with `-`) it writes standard output.
 | Option | Meaning |
 |---|---|
 | `-c COLS` | bytes per line (default 16; `-b` 6, `-i` 12, `-p` 30; at most 256 except with `-i` and `-p`; `-p -c 0` means one line) |
-| `-g BYTES` | bytes per group in the default and `-b` dumps (default 2; `-b` 1) |
+| `-g BYTES` | bytes per group in the default, `-e` and `-b` dumps (default 2; `-e` 4; `-b` 1) |
 | `-l LEN` | stop after LEN bytes |
 | `-s [+][-]OFFSET` | start at OFFSET (`-` counts from the end); with `-r`, add OFFSET to the dump's offsets |
 | `-u` | upper-case hex digits |
+| `-e` | little-endian dump: each group is one little-endian number, its last byte first (a power of two bytes; not with `-b`, `-p`, `-i` or `-r`) |
 | `-b` | binary digits instead of hex (also with `-i`) |
 | `-p`, `-ps` | plain hex, no offsets or characters |
 | `-i` | a C array (named after INFILE when there is one) |
@@ -122,14 +129,16 @@ standard input, without OUTFILE (or with `-`) it writes standard output.
 As in xxd, options come before the operands and are recognised by their
 first letter (`-u`, `-upper` and `--upper` are the same); values may be
 attached (`-c8`) or separate (`-c 8`, `-cols 8`), and are C numbers (`0x10`,
-`020`). With `-r`, a dump's lines may come in any order: gaps are filled
-with zero bytes, an existing output file is patched rather than truncated,
-and writing backwards into a pipe fails.
+`020`). With `-e`, a group that the end of the data (or of a line, when
+`-c` is not a multiple of `-g`) cuts short keeps its width, its digits
+aligned to the right. With `-r`, a dump's lines may come in any order: gaps
+are filled with zero bytes, an existing output file is patched rather than
+truncated, and writing backwards into a pipe fails.
 
 Exit status: `0` on success, `1` for bad options or columns, `2` if the
 input cannot be opened, `3` if the output cannot be opened, `4` if `-s`
 points before the start of the input, `5` if `-r` cannot seek backwards
-(or past 64 MiB), `255` if `-r` is asked for a `-i` or `-b` dump.
+(or past 64 MiB), `255` if `-r` is asked for a `-i`, `-b` or `-e` dump.
 
 ## Differences from the original
 
@@ -138,10 +147,16 @@ points before the start of the input, `5` if `-r` cannot seek backwards
   text. `-h` prints the help on standard output with status 0 (xxd: standard
   error, status 1), and `-v` prints `xxd (loup-cmd-xxd) 0.1.0` on standard
   output.
-- **Not implemented:** `-a` (autoskip), `-C`, `-d`, `-E` (EBCDIC), `-e`
-  (little-endian), `-n NAME`, `-o OFFSET` and `-R` (colour; output is never
-  coloured). They are rejected as invalid options. `-r -b` (reverting a bits
-  dump) is refused like `-r -i`.
+- **Not implemented:** `-a` (autoskip), `-C`, `-d`, `-E` (EBCDIC),
+  `-n NAME`, `-o OFFSET` and `-R` (colour; output is never coloured). They
+  are rejected as invalid options. `-r -b` (reverting a bits dump) is
+  refused like `-r -i`.
+- **`-e` with a group of the whole line:** xxd checks that the group is a
+  power of two only for a `-g` it uses as given; when `-g` is 0 or larger
+  than `-c`, the group becomes the line, and for a `-c` that is not a power
+  of two (`xxd -e -c 12 -g 0`) xxd writes overlapping, garbled columns.
+  This xxd reports `number of octets per group must be a power of 2 with
+  -e.` instead.
 - **`-r` builds its output in memory** and writes it at the end, so a dump
   whose offsets reach past 64 MiB is refused (xxd would pad a pipe with zeros
   or seek a sparse file). When standard output is a file, `-r` reopens
@@ -161,11 +176,11 @@ points before the start of the input, `5` if `-r` cannot seek backwards
 ```text
 source/main.loup             # entry point
 source/appinfo.loup          # name, version, exit statuses
-source/cli/args.loup         # xxd's option rules, C numbers, column defaults
+source/cli/args.loup         # xxd's option rules, C numbers, column defaults, byte order
 source/cli/usage.loup        # -h and -v text
 source/cli/app.loup          # run(): parse, help/version, run_xxd, exit status
 source/commands/xxd.loup     # input, -s/-l, output; run_xxd()
-source/commands/dump.loup    # default, -b, -p and -i dumps
+source/commands/dump.loup    # default (and -e), -b, -p and -i dumps
 source/commands/sink.loup    # writes a dump to stdout or OUTFILE in blocks
 source/commands/revert.loup  # -r and -r -p (xxd's huntype)
 tests/*_test.loup            # unit tests (make test)

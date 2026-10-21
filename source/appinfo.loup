@@ -18,4 +18,4 @@ pub const EXIT_INPUT: int = 2;          # cannot open the input file
 pub const EXIT_OUTPUT: int = 3;         # cannot open the output file
 pub const EXIT_SEEK: int = 4;           # -s points before the start of the input
 pub const EXIT_SEEK_BACK: int = 5;      # -r would have to write backwards into a pipe
-pub const EXIT_CANNOT_REVERT: int = 255; # -r with -i (or -b)
+pub const EXIT_CANNOT_REVERT: int = 255; # -r with -i, -b or -e

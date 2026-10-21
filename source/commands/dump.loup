@@ -1,7 +1,7 @@
 @mode(host.dual)
 
-# The four dump styles: the default hex dump, -b (bits), -p (plain hex) and
-# -i (a C array). Each takes the input bytes and the range [start, end) to
+# The four dump styles: the default hex dump (with -e, little-endian
+# groups), -b (bits), -p (plain hex) and -i (a C array). Each takes the input bytes and the range [start, end) to
 # show, and pushes the output, piece by piece, into a Sink (see sink.loup),
 # which writes it in blocks. The pieces come from tables made once per dump
 # (byte cells, offset digits, runs of spaces), so that no string is built
@@ -13,6 +13,7 @@
 # the output in memory.
 
 from commands.sink import (Sink, sink_put);
+from core.interchange import (Endianness);
 
 const HEX_DIGITS: string = "0123456789abcdef";
 const SPACES: string = "                                                                ";
@@ -80,30 +81,64 @@ func push_spaces(edits out: Sink, count: int, spaces: list[string]): void {
     }
 }
 
+# Groups needed for n bytes.
+func groups_of(n: int, group: int): int {
+    return (n + group - 1) / group;
+}
+
 # The default dump (and -b with `bits`): an offset, `cols` bytes in groups of
 # `group`, and the characters. A short last line is padded so that its
 # characters line up with the lines above.
-pub func dump_lines(data: bytes, start: int, end: int, cols: int, group: int, upper: bool, bits: bool, edits out: Sink): void {
+#
+# `order` is how a group reads. BigEndian shows its bytes in file order.
+# LittleEndian (-e) shows each group as one little-endian number: last byte
+# first. A group cut short by the end of the line (or of a line of -c bytes
+# that is not a multiple of the group) keeps its full width, its missing
+# high-order bytes left blank, so the digits stay right-aligned under the
+# groups above.
+pub func dump_lines(data: bytes, start: int, end: int, cols: int, group: int, upper: bool, bits: bool, order: Endianness, edits out: Sink): void {
     let cells = if (bits) { bits_table() } else { hex_table(upper) };
     let shown = char_table();
     let offset_digits = digit_table();
     let spaces = spaces_table();
     let digits = if (bits) { 8 } else { 2 };
     let group_width = digits * group + 1;
-    # Width of a full line's byte columns (xxd: (grplen * cols - 1) / octspergrp).
-    let width = (group_width * cols - 1) / group;
+    let little = match order {
+        Endianness.LittleEndian => true,
+        _ => false,
+    };
+    # Width of a full line's byte columns (xxd: (grplen * cols - 1) /
+    # octspergrp); with -e every group, the last too, is a whole one.
+    let width = if (little) { group_width * groups_of(cols, group) - 1 } else { (group_width * cols - 1) / group };
     var pos = start;
     while (pos < end) {
         let count = if (end - pos < cols) { end - pos } else { cols };
         push_offset(edits: out, pos, offset_digits);
         sink_put(edits: out, ": ");
-        for (k in 0..count) {
-            if (k > 0 and k % group == 0) {
-                sink_put(edits: out, " ");
+        var used = 0;
+        if (little) {
+            var first = 0;
+            while (first < count) {
+                if (first > 0) {
+                    sink_put(edits: out, " ");
+                }
+                let present = if (count - first < group) { count - first } else { group };
+                push_spaces(edits: out, (group - present) * digits, spaces);
+                for (var k = first + present - 1; k >= first; k -= 1) {
+                    sink_put(edits: out, cells[data[pos + k]]);
+                }
+                first += group;
             }
-            sink_put(edits: out, cells[data[pos + k]]);
+            used = group_width * groups_of(count, group) - 1;
+        } else {
+            for (k in 0..count) {
+                if (k > 0 and k % group == 0) {
+                    sink_put(edits: out, " ");
+                }
+                sink_put(edits: out, cells[data[pos + k]]);
+            }
+            used = count * digits + (count - 1) / group;
         }
-        let used = count * digits + (count - 1) / group;
         push_spaces(edits: out, width - used + 2, spaces);
         for (k in 0..count) {
             sink_put(edits: out, shown[data[pos + k]]);

@@ -9,7 +9,7 @@
 # `func test_*()`. It is not part of the binary.
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, c_number, layout, plain_message);
+from cli.args import (parse_args, c_number, layout, plain_message, little_endian);
 
 func test_c_numbers(): void {
     expectEq(c_number("16"), 16, "decimal");
@@ -70,6 +70,25 @@ func test_modes(): void {
     expect(parse_args(["-p", "-i"]).is_err(), "-p -i");
     expect(parse_args(["-b", "-p"]).is_err(), "-b -p");
     expect(parse_args(["-b", "-b"]).is_ok(), "-b twice is fine");
+}
+
+func test_little_endian(): void {
+    expect(!little_endian(parse_args([]).unwrap()), "groups read in file order by default");
+    let e = parse_args(["-e"]).unwrap();
+    expect(little_endian(e) and e.mode == "hex", "-e: a hex dump of little-endian groups");
+    expect(parse_args(["-e", "-u", "-e"]).is_ok(), "-e twice, and with -u");
+    expectEq(parse_args(["-e", "-b"]).unwrap_err(), "only one of -b, -e, -u, -p, -i can be used", "-e -b");
+    expect(parse_args(["-b", "-e"]).is_err() and parse_args(["-p", "-e"]).is_err() and parse_args(["-e", "-i"]).is_err(), "nor with -p or -i");
+    let (cols, group) = layout(e).unwrap();
+    expect(cols == 16 and group == 4, "16 columns in groups of 4");
+    let (c6, g6) = layout(parse_args(["-e", "-c", "6"]).unwrap()).unwrap();
+    expect(c6 == 6 and g6 == 4, "a group may run past the end of a line");
+    let (c0, g0) = layout(parse_args(["-e", "-g", "0"]).unwrap()).unwrap();
+    expect(c0 == 16 and g0 == 16, "-g 0: the whole line is one group");
+    let odd = layout(parse_args(["-e", "-g", "3"]).unwrap()).unwrap_err();
+    expectEq(odd, "number of octets per group must be a power of 2 with -e.", "groups of 3");
+    expect(plain_message(odd), "printed without the Try line");
+    expect(layout(parse_args(["-e", "-c", "12", "-g", "0"]).unwrap()).is_err(), "a whole line of 12 is no power of two either");
 }
 
 func test_layout_defaults(): void {

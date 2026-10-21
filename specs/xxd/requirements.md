@@ -45,8 +45,20 @@ the bytes in scripts and programs.
    `-b`), wrapped in `unsigned char NAME[] = {` and `unsigned int NAME_len`
    when the input is a named file, NAME being the file name with other
    characters turned into `_` and `__` before a leading digit.
-4. WHEN `-p` is combined with `-b` or `-i`, THE program SHALL report
+4. WHEN `-p` is combined with `-b` or `-i`, or `-e` with `-b`, `-p` or
+   `-i`, THE program SHALL report
    `only one of -b, -e, -u, -p, -i can be used` and exit with status 1.
+5. WHEN `-e` is given, THE program SHALL write the default dump with each
+   group (default 4 bytes) as one little-endian number: its bytes last to
+   first. A group cut short by the end of the input or of a line SHALL keep
+   its width, its digits right-aligned, and the characters SHALL stay in
+   file order, as xxd writes them.
+6. WHEN `-e` is given with a group that is not a power of two (as given,
+   or the line's width that a `-g` of 0 or larger than `-c` falls back
+   to), THE program SHALL report `number of octets per group must be a
+   power of 2 with -e.` and exit with status 1; WHEN `-r` is given with
+   `-e`, it SHALL report `Sorry, cannot revert this type of hexdump` and
+   exit with status 255.
 
 ### Requirement 3: Choosing the bytes
 

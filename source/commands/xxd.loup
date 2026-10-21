@@ -12,7 +12,7 @@
 # printed to a redirected stdout before it would be lost.
 
 from appinfo import (APP_NAME, EXIT_OK, EXIT_INPUT, EXIT_OUTPUT, EXIT_SEEK, EXIT_SEEK_BACK, EXIT_CANNOT_REVERT);
-from cli.args import (Options);
+from cli.args import (Options, little_endian);
 from commands.dump import (dump_lines, plain_lines, include_lines, c_name);
 from commands.sink import (Sink, stdout_sink, file_sink, sink_flush);
 from commands.revert import (Reverted, revert_dump);
@@ -51,7 +51,6 @@ pub func dump_end(size: int, start: int, length: int): int {
     return size;
 }
 
-# The dump of `data` as text, in the style the options select.
 # The dump of `data` in the style the options select, pushed into `out`
 # (the caller flushes it).
 pub func render_dump(data: bytes, opts: Options, cols: int, group: int, start: int, edits out: Sink): void {
@@ -62,7 +61,7 @@ pub func render_dump(data: bytes, opts: Options, cols: int, group: int, start: i
     } else if (opts.mode == "include") {
         include_lines(data, start, end, cols, opts.upper, opts.bits, if (named) { c_name(opts.infile) } else { "" }, edits: out);
     } else {
-        dump_lines(data, start, end, cols, group, opts.upper, opts.bits, edits: out);
+        dump_lines(data, start, end, cols, group, opts.upper, opts.bits, opts.order, edits: out);
     }
 }
 
@@ -105,7 +104,7 @@ pub func run_xxd(opts: Options, cols: int, group: int): int {
     let data = readBytes(if (from_stdin) { "/dev/stdin" } else { opts.infile });
 
     if (opts.revert) {
-        if (opts.mode == "include" or opts.bits) {
+        if (opts.mode == "include" or opts.bits or little_endian(opts)) {
             return fail("Sorry, cannot revert this type of hexdump", EXIT_CANNOT_REVERT);
         }
         let base = if (opts.seek_from_end) { -opts.seek } else { opts.seek };

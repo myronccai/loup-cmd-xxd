@@ -13,6 +13,7 @@ from commands.revert import (hex_value, revert_dump);
 from commands.dump import (plain_lines, dump_lines);
 from commands.sink import (collector, collected);
 from system.text import (fromHex);
+from core.interchange import (Endianness);
 
 func text(s: string): bytes {
     var codes: list[int] = [];
@@ -100,7 +101,7 @@ func test_round_trips(): void {
     }
     expectEq(show(from_plain), show(oracle), "the same bytes as fromHex");
     var dump_out = collector();
-    dump_lines(data, 0, 100, 16, 2, false, false, edits: dump_out);
+    dump_lines(data, 0, 100, 16, 2, false, false, Endianness.BigEndian, edits: dump_out);
     let dumped = collected(dump_out);
     expectEq(show(rev(dumped, false, true)), show(codes), "-r");
 }

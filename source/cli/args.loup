@@ -15,13 +15,19 @@
 # Structure: c_number (C's strtol), then parse_args, which reads options by
 # first letter; the defaults that depend on the mode (columns, group size)
 # are applied afterwards by layout(), because -c and -g may come before or
-# after -b, -p and -i.
+# after -b, -e, -p and -i.
+
+from core.interchange import (Endianness);
 
 pub struct Options {
     pub var help: bool;
     pub var version: bool;
     pub var mode: string;          # "hex" (default), "plain" (-p) or "include" (-i)
     pub var bits: bool;            # -b: binary digits, in the default or -i style
+    # How the hex dump reads a group of bytes: BigEndian, in file order (the
+    # default), or LittleEndian (-e), as one little-endian number, last
+    # byte first.
+    pub var order: Endianness;
     pub var upper: bool;           # -u
     pub var revert: bool;          # -r
     pub var cols: int;             # -c; 0 with cols_given false means the mode's default
@@ -39,7 +45,15 @@ pub struct Options {
 # A usage error, with whether xxd reports it with the bare message (true)
 # or as a usage problem followed by the "Try" line (false).
 pub func plain_message(msg: string): bool {
-    return msg.startsWith("only one of") or msg.startsWith("invalid number of columns");
+    return msg.startsWith("only one of") or msg.startsWith("invalid number of columns") or msg.startsWith("number of octets per group");
+}
+
+# Whether the options ask for -e's little-endian groups.
+pub func little_endian(opts: Options): bool {
+    return match opts.order {
+        Endianness.LittleEndian => true,
+        _ => false,
+    };
 }
 
 func digit_value(ch: string): int {
@@ -87,6 +101,7 @@ pub func default_options(): Options {
         version = false,
         mode = "hex",
         bits = false,
+        order = Endianness.BigEndian,
         upper = false,
         revert = false,
         cols = 0,
@@ -102,20 +117,26 @@ pub func default_options(): Options {
     );
 }
 
-# Selects a dump style: -p excludes -b and -i; -b and -i combine.
+# Selects a dump style: -p excludes -b and -i; -b and -i combine; -e
+# ("little") goes with none of them.
 func set_mode(edits opts: Options, mode: string): Result[bool, string] {
+    let little = little_endian(opts);
     let clash = if (mode == "bits") {
-        opts.mode == "plain"
+        opts.mode == "plain" or little
     } else if (mode == "plain") {
-        opts.bits or opts.mode == "include"
+        opts.bits or opts.mode == "include" or little
+    } else if (mode == "little") {
+        opts.bits or opts.mode != "hex"
     } else {
-        opts.mode == "plain"
+        opts.mode == "plain" or little
     };
     if (clash) {
         return Err("only one of -b, -e, -u, -p, -i can be used");
     }
     if (mode == "bits") {
         opts.bits = true;
+    } else if (mode == "little") {
+        opts.order = Endianness.LittleEndian;
     } else {
         opts.mode = mode;
     }
@@ -153,6 +174,8 @@ pub func parse_args(argv: list[string]): Result[Options, string] {
         var used_next = false;
         if (letter == "b") {
             set_mode(edits: opts, "bits")?;
+        } else if (letter == "e") {
+            set_mode(edits: opts, "little")?;
         } else if (letter == "p") {
             set_mode(edits: opts, "plain")?;
         } else if (letter == "i") {
@@ -218,8 +241,14 @@ pub func parse_args(argv: list[string]): Result[Options, string] {
     return Ok(opts);
 }
 
+# Whether n is 1, 2, 4, 8, ...
+func power_of_two(n: int): bool {
+    return n > 0 and (n & (n - 1)) == 0;
+}
+
 # The columns and group size after the mode's defaults are applied, or the
-# "invalid number of columns" error. Returns (cols, group).
+# "invalid number of columns" error (or, with -e, the error for a group
+# that is not a power of two). Returns (cols, group).
 pub func layout(opts: Options): Result[(int, int), string] {
     var cols = opts.cols;
     if (!opts.cols_given or (cols == 0 and opts.mode != "plain")) {
@@ -233,15 +262,22 @@ pub func layout(opts: Options): Result[(int, int), string] {
             16
         };
     }
+    let little = little_endian(opts);
     var group = opts.group;
     if (group < 0) {
-        group = if (opts.mode != "hex") { 0 } else if (opts.bits) { 1 } else { 2 };
+        group = if (opts.mode != "hex") { 0 } else if (opts.bits) { 1 } else if (little) { 4 } else { 2 };
     }
     if ((opts.mode == "plain" and cols < 0) or (opts.mode != "plain" and cols < 1) or (opts.mode == "hex" and cols > 256)) {
         return Err("invalid number of columns (max. 256).");
     }
     if (group < 1 or group > cols) {
         group = cols;
+    }
+    # -e turns each group around, so a group must be a power of two bytes.
+    # xxd checks only a -g it can use as given; a group that falls back to
+    # the line's width is checked here too.
+    if (little and !power_of_two(group)) {
+        return Err("number of octets per group must be a power of 2 with -e.");
     }
     return Ok((cols, group));
 }

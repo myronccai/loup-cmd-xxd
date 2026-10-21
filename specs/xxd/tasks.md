@@ -16,3 +16,5 @@
   - _Requirements: 5.3_
 - [x] 8. Unit tests and end-to-end tests of the native binary, checked against the real xxd
   - _Requirements: all_
+- [x] 9. `-e`: little-endian groups named with `core.interchange.Endianness`, short groups right-aligned, the power-of-two check, `-r -e` refused; unit and end-to-end tests checked against xxd 2024-12-07
+  - _Requirements: 2.4, 2.5, 2.6_
