@@ -8,8 +8,9 @@
 # `func test_*()`. It is not part of the binary.
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, layout);
+from cli.args import (Options, parse_args, layout);
 from commands.xxd import (seek_start, dump_end, render_dump);
+from commands.sink import (collector, collected);
 
 func test_seek_in_a_file(): void {
     let none: list[string] = [];
@@ -34,11 +35,17 @@ func test_dump_end(): void {
     expectEq(dump_end(10, 12, 5), 12, "start past the end");
 }
 
+func rendered(data: bytes, opts: Options, cols: int, group: int, start: int): string {
+    var s = collector();
+    render_dump(data, opts, cols, group, start, edits: s);
+    return collected(s);
+}
+
 func test_render(): void {
     let opts = parse_args(["-p", "-l", "2"]).unwrap();
     let (cols, group) = layout(opts).unwrap();
-    expectEq(render_dump(bytesFromInts([1, 2, 3]), opts, cols, group, 0), "0102\n", "-p -l 2");
+    expectEq(rendered(bytesFromInts([1, 2, 3]), opts, cols, group, 0), "0102\n", "-p -l 2");
     let named = parse_args(["-i", "x.bin"]).unwrap();
     let (ic, ig) = layout(named).unwrap();
-    expect(render_dump(bytesFromInts([1]), named, ic, ig, 0).startsWith("unsigned char x_bin[]"), "named array");
+    expect(rendered(bytesFromInts([1]), named, ic, ig, 0).startsWith("unsigned char x_bin[]"), "named array");
 }

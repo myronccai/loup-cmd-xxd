@@ -1,7 +1,8 @@
 @mode(host.dual)
 
 # xxd: reads the input, applies -s and -l, and writes a dump, or (with -r)
-# converts a dump back into bytes.
+# converts a dump back into bytes. A dump is streamed: the dump styles push
+# pieces into a Sink (commands/sink.loup) that writes them in blocks.
 #
 # Runtime: host.dual. Compiled into the native binary build/xxd by
 # `make build`; `loup run source/main.loup` interprets the same code, and
@@ -13,6 +14,7 @@
 from appinfo import (APP_NAME, EXIT_OK, EXIT_INPUT, EXIT_OUTPUT, EXIT_SEEK, EXIT_SEEK_BACK, EXIT_CANNOT_REVERT);
 from cli.args import (Options);
 from commands.dump import (dump_lines, plain_lines, include_lines, c_name);
+from commands.sink import (Sink, stdout_sink, file_sink, sink_flush);
 from commands.revert import (Reverted, revert_dump);
 from io.fs import (isDir, isFile);
 from io.path import (dirname);
@@ -50,15 +52,18 @@ pub func dump_end(size: int, start: int, length: int): int {
 }
 
 # The dump of `data` as text, in the style the options select.
-pub func render_dump(data: bytes, opts: Options, cols: int, group: int, start: int): string {
+# The dump of `data` in the style the options select, pushed into `out`
+# (the caller flushes it).
+pub func render_dump(data: bytes, opts: Options, cols: int, group: int, start: int, edits out: Sink): void {
     let end = dump_end(data.len(), start, opts.length);
     let named = opts.infile != "" and opts.infile != "-";
-    let pieces = match opts.mode {
-        "plain" => plain_lines(data, start, end, cols, opts.upper),
-        "include" => include_lines(data, start, end, cols, opts.upper, opts.bits, if (named) { c_name(opts.infile) } else { "" }),
-        _ => dump_lines(data, start, end, cols, group, opts.upper, opts.bits),
-    };
-    return pieces.join("");
+    if (opts.mode == "plain") {
+        plain_lines(data, start, end, cols, opts.upper, edits: out);
+    } else if (opts.mode == "include") {
+        include_lines(data, start, end, cols, opts.upper, opts.bits, if (named) { c_name(opts.infile) } else { "" }, edits: out);
+    } else {
+        dump_lines(data, start, end, cols, group, opts.upper, opts.bits, edits: out);
+    }
 }
 
 func fail(message: string, status: int): int {
@@ -134,11 +139,9 @@ pub func run_xxd(opts: Options, cols: int, group: int): int {
     if (start < 0) {
         return fail("Sorry, cannot seek.", EXIT_SEEK);
     }
-    let text = render_dump(data, opts, cols, group, start);
-    if (to_stdout(opts.outfile)) {
-        print(text);
-    } else {
-        writeText(opts.outfile, text);
-    }
+    # Written block by block as it is produced (see commands/sink.loup).
+    var out = if (to_stdout(opts.outfile)) { stdout_sink() } else { file_sink(opts.outfile) };
+    render_dump(data, opts, cols, group, start, edits: out);
+    sink_flush(edits: out);
     return EXIT_OK;
 }

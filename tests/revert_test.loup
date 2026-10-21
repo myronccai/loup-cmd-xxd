@@ -11,6 +11,7 @@
 from debug.assert import (expect, expectEq);
 from commands.revert import (hex_value, revert_dump);
 from commands.dump import (plain_lines, dump_lines);
+from commands.sink import (collector, collected);
 from system.text import (fromHex);
 
 func text(s: string): bytes {
@@ -85,7 +86,9 @@ func test_round_trips(): void {
         codes.push((k * 53 + 7) % 256);
     }
     let data = bytesFromInts(codes);
-    let plain = plain_lines(data, 0, 100, 30, false).join("");
+    var plain_out = collector();
+    plain_lines(data, 0, 100, 30, false, edits: plain_out);
+    let plain = collected(plain_out);
     let expected = fromHex(plain.split("\n").join("")).unwrap();
     expectEq(expected.len(), 100, "oracle length");
     let none: list[int] = [];
@@ -96,6 +99,8 @@ func test_round_trips(): void {
         oracle.push(expected[k]);
     }
     expectEq(show(from_plain), show(oracle), "the same bytes as fromHex");
-    let dumped = dump_lines(data, 0, 100, 16, 2, false, false).join("");
+    var dump_out = collector();
+    dump_lines(data, 0, 100, 16, 2, false, false, edits: dump_out);
+    let dumped = collected(dump_out);
     expectEq(show(rev(dumped, false, true)), show(codes), "-r");
 }

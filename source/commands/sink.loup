@@ -1,0 +1,78 @@
+@mode(host.dual)
+
+# Where a dump goes: standard output or the OUTFILE operand, written in
+# blocks as the dump is produced, or (for the unit tests) collected whole.
+#
+# A dump is many small pieces (two hex digits, a space, one character).
+# They are pushed onto one list that is reused for the whole run, and every
+# BLOCK_PIECES pieces they are joined and written. The native build keeps
+# every list made in a loop and every string it builds, so the pieces must
+# not live in a fresh list per line, nor all in one list, as they once did
+# (712 MB to dump a 10 MB file); with this sink only the joined block
+# strings stay behind, about one byte per byte of output.
+#
+# Runtime: host.dual. Compiled into the native binary build/xxd by
+# `make build`; `loup run source/main.loup` interprets the same code, and
+# tests/dump_test.loup collects into it under Stage0 (`make test`).
+
+from io.fs import (appendText, writeText);
+
+# Pieces per written block: about 2,000 lines of the default dump.
+const BLOCK_PIECES: int = 65536;
+
+pub struct Sink {
+    pub var pieces: list[string];
+    # The file to append blocks to; "" for standard output.
+    pub var path: string;
+    # Keep everything instead of writing it (unit tests).
+    pub var keep: bool;
+}
+
+# A sink for standard output.
+pub func stdout_sink(): Sink {
+    let none: list[string] = [];
+    return Sink(pieces = none, path = "", keep = false);
+}
+
+# A sink for the file `path`, which is created (or emptied) now and then
+# appended to block by block.
+pub func file_sink(path: string): Sink {
+    writeText(path, "");
+    let none: list[string] = [];
+    return Sink(pieces = none, path = path, keep = false);
+}
+
+# A sink that keeps everything; read it with collected().
+pub func collector(): Sink {
+    let none: list[string] = [];
+    return Sink(pieces = none, path = "", keep = true);
+}
+
+pub func sink_put(edits s: Sink, piece: string): void {
+    s.pieces.push(piece);
+    if (!s.keep and s.pieces.len() >= BLOCK_PIECES) {
+        sink_flush(edits: s);
+    }
+}
+
+# Writes what is pending and empties the list (in place, so that it is
+# reused).
+pub func sink_flush(edits s: Sink): void {
+    if (s.keep or s.pieces.len() == 0) {
+        return;
+    }
+    let block = s.pieces.join("");
+    if (s.path == "") {
+        print(block);
+    } else {
+        appendText(s.path, block);
+    }
+    while (s.pieces.len() > 0) {
+        s.pieces.pop();
+    }
+}
+
+# Everything a collector() received.
+pub func collected(s: Sink): string {
+    return s.pieces.join("");
+}

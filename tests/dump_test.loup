@@ -8,8 +8,36 @@
 # `func test_*()`. It is not part of the binary.
 
 from debug.assert import (expect, expectEq);
-from commands.dump import (hex_offset, hex_table, bits_table, char_table, dump_lines, plain_lines, include_lines, c_name);
+from commands.dump import (hex_table, bits_table, char_table, digit_table, spaces_table, push_offset, dump_lines, plain_lines,
+    include_lines, c_name);
+from commands.sink import (Sink, collector, collected, file_sink, sink_put, sink_flush);
+from io.fs import (createDir, readText);
 from system.text import (toHex);
+
+# The dump styles write into a Sink; these collect their output as text.
+func dump(data: bytes, start: int, end: int, cols: int, group: int, upper: bool, bits: bool): string {
+    var s = collector();
+    dump_lines(data, start, end, cols, group, upper, bits, edits: s);
+    return collected(s);
+}
+
+func plain(data: bytes, start: int, end: int, cols: int, upper: bool): string {
+    var s = collector();
+    plain_lines(data, start, end, cols, upper, edits: s);
+    return collected(s);
+}
+
+func include(data: bytes, start: int, end: int, cols: int, upper: bool, bits: bool, name: string): string {
+    var s = collector();
+    include_lines(data, start, end, cols, upper, bits, name, edits: s);
+    return collected(s);
+}
+
+func offset(n: int): string {
+    var s = collector();
+    push_offset(edits: s, n, digit_table());
+    return collected(s);
+}
 
 func sample(): bytes {
     return bytesFromInts([72, 105, 0, 127, 128, 255, 10]);
@@ -25,44 +53,44 @@ func test_tables(): void {
 }
 
 func test_offsets(): void {
-    expectEq(hex_offset(0), "00000000", "zero");
-    expectEq(hex_offset(255), "000000ff", "padded");
-    expectEq(hex_offset(4294967296), "100000000", "more than eight digits");
+    expectEq(offset(0), "00000000", "zero");
+    expectEq(offset(255), "000000ff", "padded");
+    expectEq(offset(4294967296), "100000000", "more than eight digits");
 }
 
 func test_hex_lines(): void {
-    let out = dump_lines(sample(), 0, 7, 4, 2, false, false).join("");
+    let out = dump(sample(), 0, 7, 4, 2, false, false);
     expectEq(out, "00000000: 4869 007f  Hi..\n00000004: 80ff 0a    ...\n", "two lines, the second padded");
 }
 
 func test_odd_group_size(): void {
-    let out = dump_lines(sample(), 0, 7, 5, 2, true, false).join("");
+    let out = dump(sample(), 0, 7, 5, 2, true, false);
     expectEq(out, "00000000: 4869 007F 80  Hi...\n00000005: FF0A          ..\n", "groups of 2 in 5 columns");
 }
 
 func test_start_offset(): void {
-    let out = dump_lines(sample(), 5, 7, 16, 2, false, false).join("");
+    let out = dump(sample(), 5, 7, 16, 2, false, false);
     expectEq(out, "00000005: ff0a                                     ..\n", "offset of the first byte shown");
 }
 
 func test_bits_lines(): void {
-    let out = dump_lines(sample(), 0, 2, 6, 1, false, true).join("");
+    let out = dump(sample(), 0, 2, 6, 1, false, true);
     # Six columns of 8 digits and a space: 53 characters, then two spaces.
     expectEq(out, "00000000: 01001000 01101001" + " ".repeat(38) + "Hi\n", "bits");
 }
 
 func test_plain(): void {
-    expectEq(plain_lines(sample(), 0, 7, 3, false).join(""), "486900\n7f80ff\n0a\n", "3 per line");
-    expectEq(plain_lines(sample(), 0, 6, 3, false).join(""), "486900\n7f80ff\n", "no empty last line");
-    expectEq(plain_lines(sample(), 0, 7, 0, true).join(""), "4869007F80FF0A\n", "one line");
-    expectEq(plain_lines(sample(), 0, 0, 30, false).join(""), "", "nothing for no input");
+    expectEq(plain(sample(), 0, 7, 3, false), "486900\n7f80ff\n0a\n", "3 per line");
+    expectEq(plain(sample(), 0, 6, 3, false), "486900\n7f80ff\n", "no empty last line");
+    expectEq(plain(sample(), 0, 7, 0, true), "4869007F80FF0A\n", "one line");
+    expectEq(plain(sample(), 0, 0, 30, false), "", "nothing for no input");
 }
 
 func test_include(): void {
-    let out = include_lines(sample(), 0, 3, 2, false, false, "data").join("");
+    let out = include(sample(), 0, 3, 2, false, false, "data");
     expectEq(out, "unsigned char data[] = {\n  0x48, 0x69,\n  0x00\n};\nunsigned int data_len = 3;\n", "named array");
-    expectEq(include_lines(sample(), 0, 2, 12, true, false, "").join(""), "  0X48, 0X69\n", "no name for stdin");
-    expectEq(include_lines(sample(), 0, 1, 12, false, true, "").join(""), "  0b01001000\n", "binary literals");
+    expectEq(include(sample(), 0, 2, 12, true, false, ""), "  0X48, 0X69\n", "no name for stdin");
+    expectEq(include(sample(), 0, 1, 12, false, true, ""), "  0b01001000\n", "binary literals");
 }
 
 func test_c_names(): void {
@@ -78,16 +106,38 @@ func test_plain_agrees_with_to_hex(): void {
         codes.push((k * 37 + 11) % 256);
     }
     let data = bytesFromInts(codes);
-    expectEq(plain_lines(data, 0, 300, 0, false).join(""), toHex(data) + "\n", "-c 0: one line");
-    let lines = plain_lines(data, 0, 300, 30, false).join("").split("\n");
+    expectEq(plain(data, 0, 300, 0, false), toHex(data) + "\n", "-c 0: one line");
+    let lines = plain(data, 0, 300, 30, false).split("\n");
     expectEq(lines.len(), 11, "ten lines of 30 bytes and an empty piece");
     expectEq(lines.join(""), toHex(data), "the same digits");
-    expectEq(plain_lines(data, 0, 3, 30, true).join(""), toHex(data.slice(0, 3)).toUpperCase() + "\n", "-u");
-    expectEq(plain_lines(data, 5, 5, 30, false).len(), 0, "nothing to dump");
-    expectEq(plain_lines(data, 5, 5, 0, false).join(""), "\n", "-c 0 with nothing to dump");
+    expectEq(plain(data, 0, 3, 30, true), toHex(data.slice(0, 3)).toUpperCase() + "\n", "-u");
+    expectEq(plain(data, 5, 5, 30, false), "", "nothing to dump");
+    expectEq(plain(data, 5, 5, 0, false), "\n", "-c 0 with nothing to dump");
 }
 
 func test_offsets_have_eight_digits(): void {
-    expectEq(hex_offset(0), "00000000", "zero");
-    expectEq(hex_offset(4294967296), "100000000", "more than eight digits");
+    expectEq(offset(0), "00000000", "zero");
+    expectEq(offset(4294967296), "100000000", "more than eight digits");
+}
+
+func test_piece_tables(): void {
+    expectEq(digit_table()[10], "a", "offset digits");
+    expectEq(spaces_table()[3], "   ", "a run of spaces");
+    expectEq(spaces_table().len(), 65, "runs of 0 to 64 spaces");
+    expectEq(offset(305419896), "12345678", "eight digits, no padding needed");
+}
+
+# A file sink writes in blocks of 65,536 pieces as they come; the file holds
+# exactly what was put, across block boundaries.
+func test_file_sink_writes_in_blocks(): void {
+    createDir(".temp/xxd-unit");
+    var s = file_sink(".temp/xxd-unit/out.txt");
+    for (k in 0..70000) {
+        sink_put(edits: s, if (k % 2 == 0) { "ab" } else { "\n" });
+    }
+    expectEq(s.pieces.len(), 70000 - 65536, "the first block was written");
+    sink_flush(edits: s);
+    let text = readText(".temp/xxd-unit/out.txt");
+    expectEq(text.len(), 105000, "35,000 lines of three characters");
+    expect(text.startsWith("ab\nab\n") and text.endsWith("ab\n"), "in order");
 }

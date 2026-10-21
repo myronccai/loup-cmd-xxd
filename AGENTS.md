@@ -33,7 +33,8 @@ mistakes. Load those only as needed.
 │   │   └── app.loup             # run(): parse, -h/-v, columns, run_xxd, exit status
 │   └── commands/
 │       ├── xxd.loup             # seek_start(), dump_end(), render_dump(), run_xxd(): input and output
-│       ├── dump.loup            # dump_lines(), plain_lines(), include_lines(), c_name()
+│       ├── dump.loup            # dump_lines(), plain_lines(), include_lines(), c_name(): pieces into a Sink
+│       ├── sink.loup            # struct Sink: stdout, OUTFILE or collected; written in blocks
 │       └── revert.loup          # revert_dump(): -r and -r -p, a port of xxd's huntype()
 ├── tests/
 │   ├── *_test.loup              # unit tests: func test_*(): void

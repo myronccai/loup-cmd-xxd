@@ -166,6 +166,7 @@ source/cli/usage.loup        # -h and -v text
 source/cli/app.loup          # run(): parse, help/version, run_xxd, exit status
 source/commands/xxd.loup     # input, -s/-l, output; run_xxd()
 source/commands/dump.loup    # default, -b, -p and -i dumps
+source/commands/sink.loup    # writes a dump to stdout or OUTFILE in blocks
 source/commands/revert.loup  # -r and -r -p (xxd's huntype)
 tests/*_test.loup            # unit tests (make test)
 tests/e2e.sh                 # end-to-end tests of build/xxd (make e2e)

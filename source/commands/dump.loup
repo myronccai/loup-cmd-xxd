@@ -2,12 +2,17 @@
 
 # The four dump styles: the default hex dump, -b (bits), -p (plain hex) and
 # -i (a C array). Each takes the input bytes and the range [start, end) to
-# show, and returns the output as a list of pieces to join, so that even a
-# large dump is assembled in one step.
+# show, and pushes the output, piece by piece, into a Sink (see sink.loup),
+# which writes it in blocks. The pieces come from tables made once per dump
+# (byte cells, offset digits, runs of spaces), so that no string is built
+# per line or per byte: natively such strings are never freed.
 #
 # Runtime: host.dual. Compiled into the native binary build/xxd by
 # `make build`; `loup run source/main.loup` interprets the same code, and
-# tests/dump_test.loup exercises it under Stage0 (`make test`).
+# tests/dump_test.loup exercises it under Stage0 (`make test`), collecting
+# the output in memory.
+
+from commands.sink import (Sink, sink_put);
 
 const HEX_DIGITS: string = "0123456789abcdef";
 const SPACES: string = "                                                                ";
@@ -38,26 +43,39 @@ pub func char_table(): list[string] {
     return table;
 }
 
-# A file offset as at least eight lower-case hex digits (C's "%08lx").
-pub func hex_offset(n: int): string {
-    # At least one digit, even for offset 0, then zero-padded below.
-    var digits = "";
-    var v = n;
-    do {
-        digits = HEX_DIGITS.slice(v % 16, v % 16 + 1) + digits;
-        v = v / 16;
-    } while (v > 0);
-    while (digits.len() < 8) {
-        digits = "0" + digits;
-    }
-    return digits;
+# The one-digit strings "0" to "f", for offsets.
+pub func digit_table(): list[string] {
+    let table: list[string] = [HEX_DIGITS.slice(d, d + 1) for d in 0..16];
+    return table;
 }
 
-func push_spaces(edits out: list[string], count: int): void {
+# Runs of 0 to 64 spaces, for padding.
+pub func spaces_table(): list[string] {
+    let table: list[string] = [SPACES.slice(0, n) for n in 0..SPACES.len() + 1];
+    return table;
+}
+
+# A file offset as at least eight lower-case hex digits (C's "%08lx"),
+# one digit piece at a time from `digits` (digit_table()).
+pub func push_offset(edits out: Sink, n: int, digits: list[string]): void {
+    # The shift of the leading digit: 28 for eight digits, more only when
+    # the offset needs them.
+    var shift = 28;
+    while (shift < 60 and (n >> (shift + 4)) > 0) {
+        shift += 4;
+    }
+    do {
+        sink_put(edits: out, digits[(n >> shift) & 15]);
+        shift -= 4;
+    } while (shift >= 0);
+}
+
+func push_spaces(edits out: Sink, count: int, spaces: list[string]): void {
+    let most = spaces.len() - 1;
     var left = count;
     while (left > 0) {
-        let n = if (left > SPACES.len()) { SPACES.len() } else { left };
-        out.push(SPACES.slice(0, n));
+        let n = if (left > most) { most } else { left };
+        sink_put(edits: out, spaces[n]);
         left -= n;
     }
 }
@@ -65,57 +83,55 @@ func push_spaces(edits out: list[string], count: int): void {
 # The default dump (and -b with `bits`): an offset, `cols` bytes in groups of
 # `group`, and the characters. A short last line is padded so that its
 # characters line up with the lines above.
-pub func dump_lines(data: bytes, start: int, end: int, cols: int, group: int, upper: bool, bits: bool): list[string] {
+pub func dump_lines(data: bytes, start: int, end: int, cols: int, group: int, upper: bool, bits: bool, edits out: Sink): void {
     let cells = if (bits) { bits_table() } else { hex_table(upper) };
     let shown = char_table();
+    let offset_digits = digit_table();
+    let spaces = spaces_table();
     let digits = if (bits) { 8 } else { 2 };
     let group_width = digits * group + 1;
     # Width of a full line's byte columns (xxd: (grplen * cols - 1) / octspergrp).
     let width = (group_width * cols - 1) / group;
-    var out: list[string] = [];
     var pos = start;
     while (pos < end) {
         let count = if (end - pos < cols) { end - pos } else { cols };
-        out.push(hex_offset(pos));
-        out.push(": ");
+        push_offset(edits: out, pos, offset_digits);
+        sink_put(edits: out, ": ");
         for (k in 0..count) {
             if (k > 0 and k % group == 0) {
-                out.push(" ");
+                sink_put(edits: out, " ");
             }
-            out.push(cells[data[pos + k]]);
+            sink_put(edits: out, cells[data[pos + k]]);
         }
         let used = count * digits + (count - 1) / group;
-        push_spaces(edits: out, width - used + 2);
+        push_spaces(edits: out, width - used + 2, spaces);
         for (k in 0..count) {
-            out.push(shown[data[pos + k]]);
+            sink_put(edits: out, shown[data[pos + k]]);
         }
-        out.push("\n");
+        sink_put(edits: out, "\n");
         pos += count;
     }
-    return out;
 }
 
 # -p: bare hex digits, `cols` bytes per line; 0 means a single line (a
 # lone newline when there is nothing to dump). Each line is one slice of
 # the input turned into hex by bytes.toHex().
-pub func plain_lines(data: bytes, start: int, end: int, cols: int, upper: bool): list[string] {
-    var out: list[string] = [];
+pub func plain_lines(data: bytes, start: int, end: int, cols: int, upper: bool, edits out: Sink): void {
     if (start >= end) {
         if (cols == 0) {
-            out.push("\n");
+            sink_put(edits: out, "\n");
         }
-        return out;
+        return;
     }
     let step = if (cols > 0) { cols } else { end - start };
     var pos = start;
     while (pos < end) {
         let stop = if (end - pos < step) { end } else { pos + step };
         let hex: string = data.slice(pos, stop).toHex();
-        out.push(if (upper) { hex.toUpperCase() } else { hex });
-        out.push("\n");
+        sink_put(edits: out, if (upper) { hex.toUpperCase() } else { hex });
+        sink_put(edits: out, "\n");
         pos = stop;
     }
-    return out;
 }
 
 # The C identifier xxd derives from a file name: other characters become
@@ -136,32 +152,30 @@ pub func c_name(file_name: string): string {
 # -i: the bytes as a C initializer, `cols` per line, as hex literals or
 # (with -b) binary ones. With a variable name (when the input is a named
 # file) the array declaration and a length variable surround it.
-pub func include_lines(data: bytes, start: int, end: int, cols: int, upper: bool, bits: bool, name: string): list[string] {
+pub func include_lines(data: bytes, start: int, end: int, cols: int, upper: bool, bits: bool, name: string, edits out: Sink): void {
     let cells = if (bits) { bits_table() } else { hex_table(upper) };
     let prefix = if (bits) { "0b" } else if (upper) { "0X" } else { "0x" };
-    var out: list[string] = [];
     if (name.len() > 0) {
-        out.push("unsigned char " + name + "[] = {\n");
+        sink_put(edits: out, "unsigned char " + name + "[] = {\n");
     }
     var p = 0;
     for (pos in start..end) {
         if (p % cols != 0) {
-            out.push(", ");
+            sink_put(edits: out, ", ");
         } else if (p == 0) {
-            out.push("  ");
+            sink_put(edits: out, "  ");
         } else {
-            out.push(",\n  ");
+            sink_put(edits: out, ",\n  ");
         }
-        out.push(prefix);
-        out.push(cells[data[pos]]);
+        sink_put(edits: out, prefix);
+        sink_put(edits: out, cells[data[pos]]);
         p += 1;
     }
     if (p > 0) {
-        out.push("\n");
+        sink_put(edits: out, "\n");
     }
     if (name.len() > 0) {
-        out.push("};\n");
-        out.push("unsigned int " + name + "_len = " + str(p) + ";\n");
+        sink_put(edits: out, "};\n");
+        sink_put(edits: out, "unsigned int " + name + "_len = " + str(p) + ";\n");
     }
-    return out;
 }
